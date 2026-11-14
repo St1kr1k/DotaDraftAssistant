@@ -82,6 +82,10 @@ public sealed class RecognitionOptions
 
 public sealed class ScoringOptions
 {
+    /// <summary>Версия набора весов. При обновлении приложения со сменой весов старые сохранённые настройки оценки сбрасываются.</summary>
+    public const int CurrentVersion = 2;
+    public int Version { get; set; }
+
     /// <summary>
     /// Веса раннего пика (о врагах почти ничего не известно): важнее ваша позиция, сила героя в патче
     /// и устойчивость к контрпику. Сумма — 100.
@@ -90,33 +94,33 @@ public sealed class ScoringOptions
     {
         Weights = new()
         {
-            [ScoreComponent.RoleFit] = 15,
-            [ScoreComponent.Comfort] = 15,
-            [ScoreComponent.Meta] = 25,
-            [ScoreComponent.Safety] = 10,
+            [ScoreComponent.RoleFit] = 10,
+            [ScoreComponent.Comfort] = 10,
+            [ScoreComponent.Meta] = 20,
+            [ScoreComponent.Safety] = 15,
             [ScoreComponent.Synergy] = 10,
             [ScoreComponent.Pairs] = 5,
-            [ScoreComponent.Lane] = 10,
-            [ScoreComponent.Counter] = 10,
+            [ScoreComponent.Lane] = 15,
+            [ScoreComponent.Counter] = 15,
         },
     };
 
     /// <summary>
-    /// Веса позднего пика (враги известны): линия и вся вражеская команда весят вместе 45%,
-    /// обе синергии (чего не хватает + связки) — 25%. Сумма — 100.
+    /// Веса позднего пика (враги известны): линия и вся вражеская команда весят вместе 55%,
+    /// мета и ваши отметки — 15%. Сумма — 100.
     /// </summary>
     public ScoringWeights WeightsLate { get; set; } = new()
     {
         Weights = new()
         {
-            [ScoreComponent.RoleFit] = 10,
-            [ScoreComponent.Comfort] = 10,
+            [ScoreComponent.RoleFit] = 5,
+            [ScoreComponent.Comfort] = 5,
             [ScoreComponent.Meta] = 10,
-            [ScoreComponent.Safety] = 0,
-            [ScoreComponent.Synergy] = 15,
+            [ScoreComponent.Safety] = 5,
+            [ScoreComponent.Synergy] = 10,
             [ScoreComponent.Pairs] = 10,
-            [ScoreComponent.Lane] = 20,
-            [ScoreComponent.Counter] = 25,
+            [ScoreComponent.Lane] = 25,
+            [ScoreComponent.Counter] = 30,
         },
     };
 
@@ -140,14 +144,14 @@ public sealed class ScoringOptions
     public int PairPriorGames { get; set; } = 150;
 
     /// <summary>Отклонение WR, которое соответствует максимальной оценке компонента (±1).</summary>
-    public double MetaFullScaleWinrateDelta { get; set; } = 0.05;
-    public double CounterFullScaleWinrateDelta { get; set; } = 0.04;
+    public double MetaFullScaleWinrateDelta { get; set; } = 0.06;
+    public double CounterFullScaleWinrateDelta { get; set; } = 0.025;
     public double PairFullScaleWinrateDelta { get; set; } = 0.04;
     /// <summary>Отклонение доли выигранных линий для максимальной оценки линии.</summary>
     public double LaneFullScaleDelta { get; set; } = 0.08;
 
-    public double MainHeroValue { get; set; } = 1.0;
-    public double ComfortHeroValue { get; set; } = 0.6;
+    public double MainHeroValue { get; set; } = 0.7;
+    public double ComfortHeroValue { get; set; } = 0.4;
     public double SoftAvoidValue { get; set; } = -1.0;
 }
 

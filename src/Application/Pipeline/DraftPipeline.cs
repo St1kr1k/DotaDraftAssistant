@@ -170,7 +170,7 @@ public sealed class DraftPipeline
         {
             int rawPicks = observation.Slots.Count(s => s.Slot.Kind == SlotKind.Pick && s.Content == ObservedContent.Hero);
             bool inGame = external == ExternalGameState.InGame
-                          || (_machine.Phase == DraftPhase.Idle && rawPicks >= 8);
+                          || (_machine.Phase == DraftPhase.Idle && (rawPicks >= 8 || external == ExternalGameState.PostDraft));
             if (inGame) observation = observation with { DraftScreenVisible = false };
         }
 

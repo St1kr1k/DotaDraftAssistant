@@ -124,7 +124,7 @@ public sealed class PopupViewModel : ObservableObject
                 (int)Math.Round(r.Score),
                 _images.Portrait(r.Hero.Id, 220),
                 i++ == 0,
-                r.Reasons.Take(2).Select(ToReason).ToList()));
+                r.Reasons.Take(3).Select(ToReason).ToList()));
         }
         Raise(nameof(HasPicks));
     }

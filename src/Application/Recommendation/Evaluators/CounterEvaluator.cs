@@ -23,7 +23,7 @@ public sealed class CounterEvaluator(Func<ScoringOptions> options) : ICounterpic
 
         double advantageSum = 0, confidenceSum = 0;
         int known = 0;
-        var reasons = new List<Reason>();
+        var details = new List<(Hero Enemy, double Adv, double Conf, int Games)>();
 
         foreach (var enemy in context.Enemies)
         {
@@ -36,19 +36,7 @@ public sealed class CounterEvaluator(Func<ScoringOptions> options) : ICounterpic
             advantageSum += adv;
             confidenceSum += conf;
             known++;
-
-            if (Math.Abs(adv) >= 0.02)
-            {
-                bool good = adv > 0;
-                reasons.Add(new Reason(
-                    Component,
-                    good ? ReasonPolarity.Positive : ReasonPolarity.Negative,
-                    good ? $"хорош против {enemy.LocalizedName} ({adv:+0.0%;-0.0%} WR в матчапе)"
-                         : $"слаб против {enemy.LocalizedName} ({adv:+0.0%;-0.0%} WR в матчапе)",
-                    Math.Abs(adv) / o.CounterFullScaleWinrateDelta,
-                    conf,
-                    $"{context.Patch.MatchupSource}, {m.Games:N0} игр"));
-            }
+            details.Add((enemy, adv, conf, m.Games));
         }
 
         if (known == 0) return ComponentScore.Neutral(Component);
@@ -57,6 +45,30 @@ public sealed class CounterEvaluator(Func<ScoringOptions> options) : ICounterpic
         double avgAdvantage = advantageSum / context.Enemies.Count;
         double value = Math.Clamp(avgAdvantage / o.CounterFullScaleWinrateDelta, -1, 1);
         double confidence = confidenceSum / context.Enemies.Count;
+
+        // Объяснение — сводка по всему драфту врага: средний плюс, против кого лучше всего и почему (по статистике
+        // убийств/смертей), и отдельно — против кого опасно.
+        string Detail((Hero Enemy, double Adv, double Conf, int Games) d)
+        {
+            var why = KdaAverages.Why(context.Patch, candidate.Id, d.Enemy.Id);
+            return $"{d.Enemy.LocalizedName} ({d.Adv:+0.0%;-0.0%}{(why is null ? "" : ", " + why)})";
+        }
+        var reasons = new List<Reason>();
+        var best = details.Where(d => d.Adv >= 0.015).OrderByDescending(d => d.Adv).Take(2).ToList();
+        var worst = details.Where(d => d.Adv <= -0.015).OrderBy(d => d.Adv).Take(2).ToList();
+        string evidence = $"{context.Patch.MatchupSource}, {details.Sum(d => d.Games):N0} игр в матчапах";
+        if (avgAdvantage >= 0.005 && best.Count > 0)
+        {
+            reasons.Add(new Reason(Component, ReasonPolarity.Positive,
+                $"против драфта врага {avgAdvantage:+0.0%;-0.0%} WR; лучше всего — против {string.Join(", ", best.Select(Detail))}",
+                Math.Abs(value), confidence, evidence));
+        }
+        if (worst.Count > 0)
+        {
+            reasons.Add(new Reason(Component, ReasonPolarity.Negative,
+                $"опасно против {string.Join(", ", worst.Select(Detail))}",
+                Math.Min(1, Math.Abs(worst[0].Adv) / o.CounterFullScaleWinrateDelta), worst[0].Conf, evidence));
+        }
         return new ComponentScore(Component, value, confidence, reasons);
     }
 }

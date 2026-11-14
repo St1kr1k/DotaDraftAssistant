@@ -25,13 +25,9 @@ public sealed class RoleFitEvaluator(IRoleInferenceService roles) : IRoleFitEval
         double value = Math.Clamp(2 * ratio - 1, -1, 1);
 
         var reasons = new List<Reason>();
-        if (value >= 0.6)
-        {
-            reasons.Add(new Reason(Component, ReasonPolarity.Positive,
-                fromStats ? $"на pos {(int)pos} его играют в {p:P0} игр" : $"типичный герой для pos {(int)pos}",
-                value, confidence, dist.Basis));
-        }
-        else if (value <= -0.3)
+        // Подходящая позиция — не причина брать героя (герои не под позицию и так отсеяны),
+        // поэтому в объяснения попадает только минус: «чаще играют на другой позиции».
+        if (value <= -0.3)
         {
             reasons.Add(new Reason(Component, ReasonPolarity.Negative,
                 fromStats ? $"чаще играют на pos {(int)dist.MostLikely}, на pos {(int)pos} — {p:P0} игр"

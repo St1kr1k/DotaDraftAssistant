@@ -93,6 +93,10 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             var abilities = ReadAll<HeroAbilitiesDto>(dir, "abilities.json");
             // Строки без источника — из старых файлов OpenDota.
             foreach (var m in matchups.Where(m => string.IsNullOrEmpty(m.Source))) m.Source = "opendota";
+            // Если есть STRATZ по вашему рангу, общая статистика OpenDota (все ранги) для тех же пар не подмешивается:
+            // это разные игроки, и их расхождение ложно снижало уверенность («возможно, …»).
+            matchups = PreferStratz(matchups, m => (m.HeroId, m.VsHeroId), m => m.Source);
+            positions = PreferStratz(positions, p => (p.HeroId, 0), p => p.Source);
 
             return new PatchData
             {
@@ -252,6 +256,14 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
         return result;
     }
 
+    private static List<T> PreferStratz<T>(List<T> rows, Func<T, (int, int)> key, Func<T, string?> source)
+    {
+        var withStratz = rows.Where(r => (source(r) ?? "").StartsWith("stratz", StringComparison.OrdinalIgnoreCase))
+            .Select(key).ToHashSet();
+        return rows.Where(r => (source(r) ?? "").StartsWith("stratz", StringComparison.OrdinalIgnoreCase) || !withStratz.Contains(key(r)))
+            .ToList();
+    }
+
     private static string Join(params string?[] sources)
     {
         var parts = sources.Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
@@ -280,8 +292,19 @@ public sealed class JsonSettingsRepository(string userDirectory) : ISettingsRepo
     public AppSettings LoadSettings()
     {
         var s = Read<AppSettings>(SettingsPath);
-        if (s is not null) return s;
+        if (s is not null)
+        {
+            // Настройки оценки из старой версии приложения заменяются новыми значениями по умолчанию,
+            // иначе исправления весов не дошли бы до тех, у кого settings.json уже создан.
+            if (s.Scoring.Version < ScoringOptions.CurrentVersion)
+            {
+                s.Scoring = new ScoringOptions { Version = ScoringOptions.CurrentVersion };
+                SaveSettings(s);
+            }
+            return s;
+        }
         s = new AppSettings();
+        s.Scoring.Version = ScoringOptions.CurrentVersion;
         SaveSettings(s); // создаём файл с дефолтами, чтобы веса можно было править руками
         return s;
     }
