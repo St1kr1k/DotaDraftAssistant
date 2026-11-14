@@ -35,7 +35,27 @@ jobs:
       - name: Тесты
         run: dotnet test -c Release
 
+      # Статистика патча обновляется раз в неделю: обычные обновления кода берут её из кэша
+      # и не упираются в лимиты OpenDota.
+      - name: Неделя для кэша данных
+        id: week
+        shell: pwsh
+        run: echo "key=$(Get-Date -UFormat '%Y-w%V')" >> $env:GITHUB_OUTPUT
+
+      - name: Кэш данных героев и патча
+        id: datacache
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/heroes
+            data/patch
+          key: dota-data-${{ steps.week.outputs.key }}
+          restore-keys: dota-data-
+
       - name: Данные героев и патча (OpenDota / Steam CDN)
+        if: steps.datacache.outputs.cache-hit != 'true'
+        # Если есть данные прошлой недели, сбой OpenDota не ломает релиз — используем их.
+        continue-on-error: ${{ steps.datacache.outputs.cache-matched-key != '' }}
         run: dotnet run --project tools/DataTool -c Release -- fetch --out data
 
       - name: Публикация приложения
