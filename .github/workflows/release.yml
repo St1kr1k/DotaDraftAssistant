@@ -45,7 +45,7 @@ jobs:
 
       - name: Кэш данных героев и патча
         id: datacache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             data/heroes
@@ -54,10 +54,26 @@ jobs:
           restore-keys: dota-data-
 
       - name: Данные героев и патча (OpenDota / Steam CDN)
+        id: fetch
         if: steps.datacache.outputs.cache-hit != 'true'
-        # Если есть данные прошлой недели, сбой OpenDota не ломает релиз — используем их.
-        continue-on-error: ${{ steps.datacache.outputs.cache-matched-key != '' }}
+        # Если OpenDota недоступен, а данные прошлой недели есть — релиз собирается на них (проверка ниже).
+        continue-on-error: true
         run: dotnet run --project tools/DataTool -c Release -- fetch --out data
+
+      - name: Проверка данных
+        shell: pwsh
+        run: |
+          if (-not (Test-Path data/patch/meta.json)) { Write-Error "Нет данных патча: OpenDota недоступен и кэша нет"; exit 1 }
+          if ("${{ steps.fetch.outcome }}" -eq "failure") { Write-Host "::warning::OpenDota недоступен — используются данные из кэша" }
+
+      - name: Сохранить свежие данные в кэш
+        if: steps.fetch.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/heroes
+            data/patch
+          key: dota-data-v2-${{ steps.week.outputs.key }}
 
       # STRATZ (точные позиции, пары, исходы линий) — только если в репозитории есть секрет STRATZ_TOKEN.
       # Пока сохраняем схему API как артефакт сборки, чтобы написать запросы под реальную схему.

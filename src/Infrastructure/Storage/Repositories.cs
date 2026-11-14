@@ -88,7 +88,7 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
                 Pairs = pairs.GroupBy(p => (p.HeroId, p.AllyId))
                     .ToDictionary(g => g.Key, g =>
                     {
-                        var (games, wins, _) = Merge(g.Select(x => (x.Games, x.Wins, x.Source)));
+                        var (games, wins, _) = Merge(g.Select(x => (x.Games, x.Wins, (string?)x.Source)));
                         return new PairStats(g.Key.HeroId, g.Key.AllyId, games, wins);
                     }),
             };
@@ -104,7 +104,7 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
         rows.GroupBy(m => (m.HeroId, m.VsHeroId))
             .ToDictionary(g => g.Key, g =>
             {
-                var (games, wins, agreement) = Merge(g.Select(x => (x.Games, x.Wins, x.Source)));
+                var (games, wins, agreement) = Merge(g.Select(x => (x.Games, x.Wins, (string?)x.Source)));
                 return new MatchupStats(g.Key.HeroId, g.Key.VsHeroId, games, wins, agreement);
             });
 

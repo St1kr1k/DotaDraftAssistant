@@ -251,7 +251,23 @@ internal static class Program
     {
         for (int attempt = 1; ; attempt++)
         {
-            using var response = await http.GetAsync(url);
+            HttpResponseMessage response;
+            try
+            {
+                response = await http.GetAsync(url);
+            }
+            catch (TaskCanceledException) when (attempt < 4)
+            {
+                // Таймаут: OpenDota перегружен — подождать и повторить.
+                Console.Error.WriteLine($"\n  таймаут, повтор через {15 * attempt} с…");
+                await Task.Delay(TimeSpan.FromSeconds(15 * attempt));
+                continue;
+            }
+            catch (TaskCanceledException ex)
+            {
+                throw new HttpRequestException($"таймаут ({url.Split('?')[0]})", ex);
+            }
+            using var _ = response;
             int code = (int)response.StatusCode;
             if (response.IsSuccessStatusCode)
                 return await response.Content.ReadFromJsonAsync<T>();
