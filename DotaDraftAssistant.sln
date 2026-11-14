@@ -21,6 +21,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DraftAssistant.DataTool", "
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DraftAssistant.Tests", "tests\DraftAssistant.Tests\DraftAssistant.Tests.csproj", "{8B04E4D0-B98B-5BE0-8FDE-7E52ED05F007}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DraftAssistant.Installer", "tools\Installer\DraftAssistant.Installer.csproj", "{384698C0-96E4-52B8-BC7F-849A6E077B5B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -51,8 +53,13 @@ Global
 		{8B04E4D0-B98B-5BE0-8FDE-7E52ED05F007}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{8B04E4D0-B98B-5BE0-8FDE-7E52ED05F007}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{8B04E4D0-B98B-5BE0-8FDE-7E52ED05F007}.Release|Any CPU.Build.0 = Release|Any CPU
+		{384698C0-96E4-52B8-BC7F-849A6E077B5B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{384698C0-96E4-52B8-BC7F-849A6E077B5B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{384698C0-96E4-52B8-BC7F-849A6E077B5B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{384698C0-96E4-52B8-BC7F-849A6E077B5B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
+		{384698C0-96E4-52B8-BC7F-849A6E077B5B} = {3BD2D18D-66CB-585C-A5BC-8E35564BC1FA}
 		{C7229860-84E8-5A40-82AD-5B5438A1E9B7} = {90EFE681-1C84-5F82-8892-6856533DA7A2}
 		{6F4F96B6-FDC3-5881-9F1A-EBEC1DA5231B} = {90EFE681-1C84-5F82-8892-6856533DA7A2}
 		{47B895CB-D25F-526F-A4CA-699C22989657} = {90EFE681-1C84-5F82-8892-6856533DA7A2}

@@ -10,11 +10,12 @@
 - Windows 10 2004+ / Windows 11, .NET 8 SDK
 - Dota 2 в режиме **Borderless Window / Borderless Fullscreen** (в exclusive fullscreen GDI-захват может вернуть чёрный кадр)
 
-## Для друзей: установка одним файлом
-Скачайте и запустите **`DotaDraftAssistant-win-Setup.exe`** со страницы Releases репозитория:
-`https://github.com/<владелец>/<репозиторий>/releases/latest/download/DotaDraftAssistant-win-Setup.exe`
+## Для друзей: установка
+**С выбором папки:** https://github.com/St1kr1k/DotaDraftAssistant/releases/latest/download/DotaDraftAssistant-Installer.exe — маленький установщик: выбираете папку, он скачивает последнюю версию и ставит её туда.
 
-Установщик ставит приложение в `%LocalAppData%\DotaDraftAssistant` без прав администратора, создаёт ярлык и запускает программу. Обновления скачиваются автоматически и ставятся после закрытия приложения. Удаляется программа через «Приложения» Windows.
+**В одну кнопку:** https://github.com/St1kr1k/DotaDraftAssistant/releases/latest/download/DotaDraftAssistant-win-Setup.exe — ставит сразу в `%LocalAppData%\DotaDraftAssistant`.
+
+Права администратора не нужны, ярлык создаётся, программа запускается сама. Обновления скачиваются автоматически и ставятся после закрытия приложения. Удаляется программа через «Приложения» Windows.
 
 > Файл не подписан цифровой подписью, поэтому Windows SmartScreen покажет «Windows защитила ваш компьютер» → «Подробнее» → «Выполнить в любом случае». Чтобы убрать это предупреждение, нужен сертификат подписи кода (платный).
 

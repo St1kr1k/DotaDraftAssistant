@@ -47,6 +47,8 @@ public partial class SetupPage : UserControl
             _loading = true;
             NicknameBox.Text = _profile.Current.Nickname ?? "";
             DebugFramesBox.IsChecked = _settings.Current.Recognition.SaveDebugFrames;
+            InstallDirText.Text = $"Программа: {InstallDir}";
+            SettingsDirText.Text = $"Настройки, профиль и лог: {SettingsDir}";
             _loading = false;
             Refresh();
             _timer.Start();
@@ -163,6 +165,29 @@ public partial class SetupPage : UserControl
         if (_loading) return;
         _settings.Current.Recognition.SaveDebugFrames = DebugFramesBox.IsChecked == true;
         _settings.Save();
+    }
+
+    /// <summary>Папка установки: при установке через Velopack exe лежит в …\DotaDraftAssistant\current.</summary>
+    private static string InstallDir
+    {
+        get
+        {
+            var dir = AppContext.BaseDirectory.TrimEnd('\\');
+            return string.Equals(Path.GetFileName(dir), "current", StringComparison.OrdinalIgnoreCase)
+                ? Path.GetDirectoryName(dir) ?? dir
+                : dir;
+        }
+    }
+
+    private string SettingsDir => Path.GetDirectoryName(_debugDir) ?? _debugDir;
+
+    private void OnOpenInstallDir(object sender, RoutedEventArgs e) => OpenFolder(InstallDir);
+
+    private void OnOpenSettingsDir(object sender, RoutedEventArgs e) => OpenFolder(SettingsDir);
+
+    private static void OpenFolder(string dir)
+    {
+        try { Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true }); } catch (Exception) { }
     }
 
     private void OnOpenDebugFolder(object sender, RoutedEventArgs e)

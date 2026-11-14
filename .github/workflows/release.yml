@@ -1,6 +1,7 @@
 # Собирает приложение на серверах GitHub и публикует установщик в Releases.
 # Друг скачивает один файл:
-#   https://github.com/<владелец>/<репозиторий>/releases/latest/download/DotaDraftAssistant-win-Setup.exe
+#   https://github.com/<владелец>/<репозиторий>/releases/latest/download/DotaDraftAssistant-Installer.exe
+#   (с выбором папки; или ...-win-Setup.exe — установка в одну кнопку в %LocalAppData%)
 # Установленные копии обновляются сами.
 name: Build & Release
 
@@ -95,3 +96,17 @@ jobs:
           --releaseName "Dota Draft Assistant ${{ env.VERSION }}"
           --tag v${{ env.VERSION }}
           --token ${{ secrets.GITHUB_TOKEN }}
+
+      # Лёгкий установщик с выбором папки: качает последний Setup.exe и ставит его с --installto.
+      - name: Установщик с выбором папки
+        run: >
+          dotnet publish tools/Installer/DraftAssistant.Installer.csproj
+          -c Release
+          -p:Version=${{ env.VERSION }}
+          -p:UpdateRepoUrl=${{ env.REPO_URL }}
+          -o installer
+
+      - name: Добавить установщик в релиз
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload v${{ env.VERSION }} installer/DotaDraftAssistant-Installer.exe --clobber --repo ${{ github.repository }}

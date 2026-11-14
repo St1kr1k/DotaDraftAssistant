@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Лёгкий установщик-загрузчик: спрашивает папку, скачивает последний Setup.exe с GitHub
+    и запускает его с ‑‑installto. Собирается под .NET Framework 4.8 — он уже есть в Windows 10/11,
+    поэтому exe весит сотни килобайт, а не десятки мегабайт.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>DraftAssistant.Installer</RootNamespace>
+    <AssemblyName>DotaDraftAssistant-Installer</AssemblyName>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Product>Dota Draft Assistant Installer</Product>
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+    <Resource Include="app.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>UpdateRepoUrl</_Parameter1>
+      <_Parameter2>$(UpdateRepoUrl)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

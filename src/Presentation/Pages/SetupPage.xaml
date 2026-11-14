@@ -70,6 +70,19 @@
                 </StackPanel>
             </Border>
 
+            <!-- Где лежит программа -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="ГДЕ УСТАНОВЛЕНО" Style="{StaticResource Caps}" />
+                    <TextBlock x:Name="InstallDirText" FontSize="14" Margin="0,8,0,2" TextWrapping="Wrap" />
+                    <TextBlock x:Name="SettingsDirText" Style="{StaticResource MutedText}" Margin="0,0,0,12" />
+                    <WrapPanel>
+                        <Button Content="Открыть папку программы" Style="{StaticResource GhostButton}" Margin="0,0,10,0" Click="OnOpenInstallDir" />
+                        <Button Content="Открыть папку настроек" Style="{StaticResource GhostButton}" Click="OnOpenSettingsDir" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
             <!-- Отладка -->
             <Border Style="{StaticResource Card}">
                 <StackPanel>
