@@ -32,6 +32,13 @@ public sealed record PositionStats(int HeroId, Position Position, int Games, int
 /// <summary>Связка: герои в одной команде.</summary>
 public sealed record PairStats(int HeroId, int AllyId, int Games, int Wins);
 
+/// <summary>Исход линии против героя: выиграл / ничья / проиграл линию (по STRATZ).</summary>
+public sealed record LaneStats(int HeroId, int VsHeroId, int Games, int Wins, int Draws, int Losses)
+{
+    /// <summary>Доля «выигранной» линии: победа = 1, ничья = 0.5.</summary>
+    public double Score => Games > 0 ? (Wins + 0.5 * Draws) / Games : 0.5;
+}
+
 public sealed class PatchData
 {
     public string PatchName { get; init; } = "unknown";
@@ -44,6 +51,16 @@ public sealed class PatchData
     public IReadOnlyDictionary<(int Hero, int Ally), PairStats> Pairs { get; init; } = new Dictionary<(int, int), PairStats>();
     public string PositionSource { get; init; } = "none";
     public string PairSource { get; init; } = "none";
+    public IReadOnlyDictionary<(int Hero, int Vs), LaneStats> Lanes { get; init; } = new Dictionary<(int, int), LaneStats>();
+    public string LaneSource { get; init; } = "none";
+
+    /// <summary>Исход линии героя против другого; если есть только обратная запись — победы и поражения меняются местами.</summary>
+    public LaneStats? GetLane(int heroId, int vsHeroId)
+    {
+        if (Lanes.TryGetValue((heroId, vsHeroId), out var l)) return l;
+        if (Lanes.TryGetValue((vsHeroId, heroId), out var r)) return new LaneStats(heroId, vsHeroId, r.Games, r.Losses, r.Draws, r.Wins);
+        return null;
+    }
 
     public PositionStats? GetPosition(int heroId, Position position) =>
         Positions.TryGetValue((heroId, position), out var p) ? p : null;

@@ -213,4 +213,21 @@ public class RecommendationServiceTests
         var same = LocalPatchDataProvider.Merge([(10000, 5200, "stratz"), (8000, 4160, "opendota")]);
         Assert.True(same.Agreement > 0.95);
     }
+
+    [Fact]
+    public void Lane_prefers_lane_outcomes_over_general_matchup()
+    {
+        // Общий матчап в пользу Axe, но линию он против EnemyCore обычно проигрывает.
+        var patch = new PatchData
+        {
+            PatchName = "test",
+            LaneSource = "test",
+            Matchups = new Dictionary<(int, int), MatchupStats> { [(Axe.Id, EnemyCore.Id)] = new(Axe.Id, EnemyCore.Id, 3000, 1700) },
+            Lanes = new Dictionary<(int, int), LaneStats> { [(EnemyCore.Id, Axe.Id)] = new(EnemyCore.Id, Axe.Id, 2000, 1100, 400, 500) },
+        };
+        var profile = new PlayerProfile { MyPosition = Position.Offlane };
+        var axe = Service().Evaluate(Axe.Id, State(), profile, patch)!;
+        Assert.True(axe.Components[ScoreComponent.Lane].Value < 0);
+        Assert.Contains(axe.Reasons, r => r.Component == ScoreComponent.Lane && r.Text.Contains("линий"));
+    }
 }

@@ -40,6 +40,27 @@ public sealed class PatchMetaDto
     public string PairSource { get; set; } = "";
 }
 
+public sealed class LaneDto
+{
+    public int HeroId { get; set; }
+    public int VsHeroId { get; set; }
+    public int Games { get; set; }
+    public int Wins { get; set; }
+    public int Draws { get; set; }
+    public int Losses { get; set; }
+    public string Source { get; set; } = "";
+}
+
+/// <summary>Описание данных STRATZ (stratz_meta.json): пустая строка — этот вид данных не получен.</summary>
+public sealed class StratzMetaDto
+{
+    public DateTimeOffset FetchedAt { get; set; }
+    public string PositionSource { get; set; } = "";
+    public string MatchupSource { get; set; } = "";
+    public string PairSource { get; set; } = "";
+    public string LaneSource { get; set; } = "";
+}
+
 public sealed class HeroStatsDto
 {
     public int HeroId { get; set; }

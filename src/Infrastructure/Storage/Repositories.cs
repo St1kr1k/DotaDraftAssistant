@@ -65,19 +65,30 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
         try
         {
             var meta = Read<PatchMetaDto>(Path.Combine(dir, "meta.json")) ?? new PatchMetaDto();
+            var stratz = Read<StratzMetaDto>(Path.Combine(dir, "stratz_meta.json")) ?? new StratzMetaDto();
             var stats = Read<List<HeroStatsDto>>(Path.Combine(dir, "hero_stats.json")) ?? [];
-            var matchups = Read<List<MatchupDto>>(Path.Combine(dir, "matchups.json")) ?? [];
-            var positions = Read<List<PositionDto>>(Path.Combine(dir, "positions.json")) ?? [];
-            var pairs = Read<List<PairDto>>(Path.Combine(dir, "pairs.json")) ?? [];
+            // Один вид данных из нескольких источников: файлы читаются вместе и объединяются ниже.
+            var matchups = ReadAll<MatchupDto>(dir, "matchups.json", "stratz_matchups.json");
+            var positions = ReadAll<PositionDto>(dir, "positions.json", "stratz_positions.json");
+            var pairs = ReadAll<PairDto>(dir, "pairs.json", "stratz_pairs.json");
+            var lanes = ReadAll<LaneDto>(dir, "stratz_lanes.json");
+            // Строки без источника — из старых файлов OpenDota.
+            foreach (var m in matchups.Where(m => string.IsNullOrEmpty(m.Source))) m.Source = "opendota";
 
             return new PatchData
             {
                 PatchName = meta.Patch,
                 FetchedAt = meta.FetchedAt,
                 Source = meta.Source,
-                MatchupSource = meta.MatchupSource,
-                PositionSource = string.IsNullOrEmpty(meta.PositionSource) ? "none" : meta.PositionSource,
-                PairSource = string.IsNullOrEmpty(meta.PairSource) ? "none" : meta.PairSource,
+                MatchupSource = Join(meta.MatchupSource, stratz.MatchupSource),
+                PositionSource = Join(meta.PositionSource, stratz.PositionSource),
+                PairSource = Join(meta.PairSource, stratz.PairSource),
+                LaneSource = Join("", stratz.LaneSource),
+                Lanes = lanes.GroupBy(l => (l.HeroId, l.VsHeroId)).ToDictionary(g => g.Key, g =>
+                {
+                    var l = g.First();
+                    return new LaneStats(l.HeroId, l.VsHeroId, l.Games, l.Wins, l.Draws, l.Losses);
+                }),
                 HeroStats = stats.ToDictionary(
                     s => s.HeroId,
                     s => new HeroPatchStats(s.HeroId, s.Brackets
@@ -158,6 +169,15 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
         int games = list.Max(r => r.Games);
         return (games, (int)Math.Round(wr * games), agreement);
     }
+
+    private static string Join(params string?[] sources)
+    {
+        var parts = sources.Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+        return parts.Count > 0 ? string.Join(" + ", parts) : "none";
+    }
+
+    private static List<T> ReadAll<T>(string dir, params string[] files) =>
+        files.SelectMany(f => Read<List<T>>(Path.Combine(dir, f)) ?? []).ToList();
 
     private static T? Read<T>(string path) =>
         File.Exists(path) ? JsonSerializer.Deserialize<T>(File.ReadAllText(path), DataFiles.Json) : default;

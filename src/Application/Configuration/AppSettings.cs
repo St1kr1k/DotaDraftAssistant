@@ -139,6 +139,8 @@ public sealed class ScoringOptions
     public double MetaFullScaleWinrateDelta { get; set; } = 0.05;
     public double CounterFullScaleWinrateDelta { get; set; } = 0.04;
     public double PairFullScaleWinrateDelta { get; set; } = 0.04;
+    /// <summary>Отклонение доли выигранных линий для максимальной оценки линии.</summary>
+    public double LaneFullScaleDelta { get; set; } = 0.08;
 
     public double MainHeroValue { get; set; } = 1.0;
     public double ComfortHeroValue { get; set; } = 0.6;

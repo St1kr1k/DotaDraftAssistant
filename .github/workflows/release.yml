@@ -75,28 +75,30 @@ jobs:
             data/patch
           key: dota-data-v2-${{ steps.week.outputs.key }}
 
-      # STRATZ (точные позиции, пары, исходы линий) — только если в репозитории есть секрет STRATZ_TOKEN.
-      # Пока сохраняем схему API как артефакт сборки, чтобы написать запросы под реальную схему.
-      - name: Схема STRATZ API
+      # STRATZ: точные позиции, связки, исходы линий — только если в репозитории есть секрет STRATZ_TOKEN.
+      # Все запросы идут из одной сборки: STRATZ пускает токен максимум с 2 IP за 15 минут.
+      - name: Кэш данных STRATZ
+        id: stratzcache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/patch/stratz_*.json
+          key: stratz-v1-${{ steps.week.outputs.key }}
+          restore-keys: stratz-v1-
+
+      - name: Данные STRATZ
+        id: stratz
+        if: steps.stratzcache.outputs.cache-hit != 'true'
         continue-on-error: true
-        shell: pwsh
         env:
           STRATZ_TOKEN: ${{ secrets.STRATZ_TOKEN }}
-        run: |
-          if (-not $env:STRATZ_TOKEN) { Write-Host "STRATZ_TOKEN не задан — пропускаю"; exit 0 }
-          $q = '{"query":"{ __schema { queryType { name } types { name kind fields { name args { name type { name kind ofType { name kind } } } type { name kind ofType { name kind ofType { name kind } } } } } } }"}'
-          $h = @{ Authorization = "Bearer $env:STRATZ_TOKEN"; "User-Agent" = "STRATZ_API"; "Content-Type" = "application/json" }
-          New-Item -ItemType Directory -Force stratz | Out-Null
-          Invoke-WebRequest -Uri https://api.stratz.com/graphql -Method Post -Headers $h -Body $q -OutFile stratz/schema.json
-          Write-Host "Схема STRATZ: $((Get-Item stratz/schema.json).Length) байт"
+        run: dotnet run --project tools/DataTool -c Release -- fetch-stratz --out data
 
-      - name: Сохранить схему STRATZ
-        if: hashFiles('stratz/schema.json') != ''
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
+      - name: Сохранить данные STRATZ в кэш
+        if: steps.stratz.outcome == 'success' && hashFiles('data/patch/stratz_meta.json') != ''
+        uses: actions/cache/save@v4
         with:
-          name: stratz-schema
-          path: stratz/schema.json
+          path: data/patch/stratz_*.json
+          key: stratz-v1-${{ steps.week.outputs.key }}
 
       - name: Публикация приложения
         run: >

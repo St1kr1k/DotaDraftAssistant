@@ -30,6 +30,7 @@ internal static class Program
             return args[0] switch
             {
                 "fetch" => await Fetch(opts),
+                "fetch-stratz" => await StratzFetcher.Run(opts),
                 "check-layout" => CheckLayout(opts),
                 "add-template" => AddTemplate(opts),
                 _ => Usage(),
