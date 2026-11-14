@@ -2,12 +2,13 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using DraftAssistant.Domain.Player;
 using DraftAssistant.Infrastructure.Storage;
 
 namespace DraftAssistant.DataTool;
 
 /// <summary>
-/// Общая статистика STRATZ (GraphQL) для бракетов Legend–Immortal:
+/// Общая статистика STRATZ (GraphQL) отдельно для каждой группы рангов (файлы *_LEGEND_ANCIENT.json и т.п.):
 ///   stratz_positions.json — игры и победы героя на каждой позиции (точные pos 1–5);
 ///   stratz_matchups.json  — героя против героя;
 ///   stratz_pairs.json     — героя вместе с героем;
@@ -20,7 +21,6 @@ namespace DraftAssistant.DataTool;
 internal static class StratzFetcher
 {
     private const string Url = "https://api.stratz.com/graphql";
-    private const string Brackets = "[LEGEND_ANCIENT, DIVINE_IMMORTAL]";
     private const int HeroesPerRequest = 6;
 
     public static async Task<int> Run(Dictionary<string, string> o)
@@ -43,6 +43,19 @@ internal static class StratzFetcher
         http.DefaultRequestHeaders.UserAgent.ParseAdd("STRATZ_API");
 
         var meta = new StratzMetaDto { FetchedAt = DateTimeOffset.UtcNow };
+        foreach (var rank in RankBrackets.All)
+        {
+            Console.WriteLine($"--- {RankBrackets.Title(rank)} ---");
+            await FetchBracket(http, heroIds, patchDir, RankBrackets.Stratz(rank), meta);
+        }
+        await Save(patchDir, "stratz_meta.json", meta);
+        return 0;
+    }
+
+    private static async Task FetchBracket(HttpClient http, List<int> heroIds, string patchDir, string bracket, StratzMetaDto meta)
+    {
+        string Brackets = $"[{bracket}]";
+        string F(string kind) => $"stratz_{kind}_{bracket}.json";
 
         // 1. Позиции — один запрос на всех героев.
         try
@@ -60,8 +73,8 @@ internal static class StratzFetcher
             Console.WriteLine($"STRATZ позиции: {rows.Count} строк, героев {rows.Select(r => r.HeroId).Distinct().Count()}");
             if (rows.Select(r => r.HeroId).Distinct().Count() >= heroIds.Count / 2)
             {
-                await Save(patchDir, "stratz_positions.json", rows);
-                meta.PositionSource = "STRATZ (Legend–Immortal, позиции 1–5)";
+                await Save(patchDir, F("positions"), rows);
+                meta.PositionSource = "STRATZ (позиции 1–5, по рангам)";
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"STRATZ позиции не получены: {ex.Message}"); }
@@ -130,16 +143,16 @@ internal static class StratzFetcher
         Console.WriteLine($"Проверка матчапов: WR(A,B)+WR(B,A) в среднем {mSym:F3} (должно быть ~1)");
         if (matchups.Count > 1000 && Math.Abs(mSym - 1) < 0.05)
         {
-            await Save(patchDir, "stratz_matchups.json", matchups);
-            meta.MatchupSource = "STRATZ (Legend–Immortal)";
+            await Save(patchDir, F("matchups"), matchups);
+            meta.MatchupSource = "STRATZ (по рангам)";
         }
 
         double lSym = Symmetry(lanes.ToDictionary(l => (l.HeroId, l.VsHeroId), l => (l.Wins + 0.5 * l.Draws) / l.Games));
         Console.WriteLine($"Проверка линий: среднее {lSym:F3} (должно быть ~1)");
         if (lanes.Count > 1000 && Math.Abs(lSym - 1) < 0.08)
         {
-            await Save(patchDir, "stratz_lanes.json", lanes);
-            meta.LaneSource = "STRATZ исходы линий (Legend–Immortal)";
+            await Save(patchDir, F("lanes"), lanes);
+            meta.LaneSource = "STRATZ исходы линий (по рангам)";
         }
 
         // Для пар симметрия другая: A с B и B с A — одни и те же игры, винрейты должны совпадать.
@@ -150,12 +163,9 @@ internal static class StratzFetcher
         Console.WriteLine($"Проверка пар: |WR(A+B)−WR(B+A)| в среднем {pDiff:F3} (должно быть ~0)");
         if (pairs.Count > 1000 && pDiff < 0.03)
         {
-            await Save(patchDir, "stratz_pairs.json", pairs);
-            meta.PairSource = "STRATZ связки (Legend–Immortal)";
+            await Save(patchDir, F("pairs"), pairs);
+            meta.PairSource = "STRATZ связки (по рангам)";
         }
-
-        await Save(patchDir, "stratz_meta.json", meta);
-        return 0;
     }
 
     private static double Symmetry(Dictionary<(int, int), double> wr)

@@ -127,9 +127,6 @@ public sealed class ScoringOptions
     /// </summary>
     public double MinPositionShare { get; set; } = 0.10;
 
-    /// <summary>Бракеты для мета-статистики (1 Herald ... 8 Immortal).</summary>
-    public List<int> MetaBrackets { get; set; } = [5, 6, 7, 8];
-
     /// <summary>Сглаживание винрейта: столько "виртуальных" игр с WR 50% добавляется к выборке.</summary>
     public int MetaPriorGames { get; set; } = 500;
     public int MatchupPriorGames { get; set; } = 40;

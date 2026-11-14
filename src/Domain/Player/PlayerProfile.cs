@@ -27,6 +27,9 @@ public sealed class PlayerProfile
 {
     public Position MyPosition { get; set; } = Position.Offlane;
     public Position? SecondaryPosition { get; set; }
+
+    /// <summary>Ваш ранг: статистика (мета, позиции, матчапы) берётся по этой группе рангов.</summary>
+    public RankBracket Rank { get; set; } = RankBracket.LegendAncient;
     public Dictionary<int, HeroPreference> Preferences { get; set; } = new();
 
     /// <summary>Ник в Dota — запасной способ найти свой слот на экране драфта, если GSI не настроен.</summary>
@@ -42,6 +45,7 @@ public sealed class PlayerProfile
     {
         MyPosition = MyPosition,
         SecondaryPosition = SecondaryPosition,
+        Rank = Rank,
         Nickname = Nickname,
         Preferences = new Dictionary<int, HeroPreference>(Preferences),
     };

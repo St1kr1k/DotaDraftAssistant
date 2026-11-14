@@ -98,6 +98,9 @@ public sealed class DraftPipeline
 
     public DraftSnapshot? Last => _last;
 
+    /// <summary>Данные патча, по которым сейчас считаются рекомендации (для ранга пользователя).</summary>
+    public PatchData Patch => _patch;
+
     /// <summary>Профиль или веса изменились — пересчитать рекомендации на следующем кадре.</summary>
     public void InvalidateRecommendations() => _recommendationsDirty = true;
 
@@ -110,7 +113,7 @@ public sealed class DraftPipeline
 
     public async Task RunAsync(CancellationToken ct)
     {
-        _patch = _patchProvider.Load();
+        _patch = _patchProvider.Load(_profile().Rank);
         _log.Info($"Patch data: {_patch.PatchName}, heroes={_patch.HeroStats.Count}, matchups={_patch.Matchups.Count}");
 
         var period = TimeSpan.FromMilliseconds(1000.0 / Math.Clamp(_settings.Pipeline.AnalysisFps, 1, 30));
@@ -272,6 +275,13 @@ public sealed class DraftPipeline
 
         var (position, fromDraft) = EffectivePosition(state);
         var profile = _profile();
+        if (profile.Rank != _patch.Rank)
+        {
+            // Пользователь сменил ранг — статистика другой группы рангов.
+            _patch = _patchProvider.Load(profile.Rank);
+            _recommendationsDirty = true;
+            _log.Info($"Patch data для ранга {profile.Rank}: matchups={_patch.Matchups.Count}, positions={_patch.Positions.Count}");
+        }
         if (profile.MyPosition != position)
         {
             profile = profile.Clone();

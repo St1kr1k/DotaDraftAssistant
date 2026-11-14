@@ -1,5 +1,6 @@
 using DraftAssistant.Application.Configuration;
 using DraftAssistant.Domain.Heroes;
+using DraftAssistant.Domain.Player;
 using DraftAssistant.Domain.Scoring;
 
 namespace DraftAssistant.Application.Recommendation.Evaluators;
@@ -35,10 +36,10 @@ public sealed class MetaEvaluator(Func<ScoringOptions> options) : IMetaEvaluator
             {
                 bool good = delta > 0;
                 reasons.Add(new Reason(Component, good ? ReasonPolarity.Positive : ReasonPolarity.Negative,
-                    good ? $"силён на pos {(int)pos} в патче {context.Patch.PatchName}: WR {wr:P1}"
-                         : $"слаб на pos {(int)pos} в патче {context.Patch.PatchName}: WR {wr:P1}",
+                    good ? $"силён на pos {(int)pos} на вашем ранге: WR {wr:P1}"
+                         : $"слаб на pos {(int)pos} на вашем ранге: WR {wr:P1}",
                     Math.Abs(value), confidence,
-                    $"{p.Sources}, {p.Games:N0} игр на позиции" + (p.Agreement < 0.7 ? ", источники расходятся" : "")));
+                    $"{p.Sources}, {RankBrackets.Title(context.Profile.Rank)}, {p.Games:N0} игр на позиции" + (p.Agreement < 0.7 ? ", источники расходятся" : "")));
             }
             return new ComponentScore(Component, value, confidence, reasons);
         }
@@ -51,7 +52,8 @@ public sealed class MetaEvaluator(Func<ScoringOptions> options) : IMetaEvaluator
         if (!context.Patch.HeroStats.TryGetValue(candidate.Id, out var stats))
             return ComponentScore.Neutral(Component);
 
-        var s = stats.Sum(o.MetaBrackets);
+        var brackets = RankBrackets.OpenDota(context.Profile.Rank);
+        var s = stats.Sum(brackets);
         if (s.Picks <= 0) return ComponentScore.Neutral(Component);
 
         double wr = (s.Wins + 0.5 * o.MetaPriorGames) / (s.Picks + (double)o.MetaPriorGames);
@@ -71,7 +73,7 @@ public sealed class MetaEvaluator(Func<ScoringOptions> options) : IMetaEvaluator
                      : $"слаб в патче {context.Patch.PatchName}: WR {wr:P1}",
                 Math.Abs(value),
                 confidence,
-                $"{context.Patch.Source}, бракеты {string.Join(",", o.MetaBrackets)}, {s.Picks:N0} игр"));
+                $"{context.Patch.Source}, {RankBrackets.Title(context.Profile.Rank)}, {s.Picks:N0} игр"));
         }
 
         return new ComponentScore(Component, value, confidence, reasons);

@@ -1,6 +1,7 @@
 using DraftAssistant.Application.Configuration;
 using DraftAssistant.Domain.Heroes;
 using DraftAssistant.Domain.Patch;
+using DraftAssistant.Domain.Player;
 using DraftAssistant.Domain.Scoring;
 
 namespace DraftAssistant.Application.Recommendation.Evaluators;
@@ -30,7 +31,8 @@ public sealed class PairSynergyEvaluator(Func<ScoringOptions> options) : ISynerg
             if (pair is null || pair.Games < MinGames) continue;
 
             double pairWr = (pair.Wins + 0.5 * o.PairPriorGames) / (pair.Games + (double)o.PairPriorGames);
-            double expected = (Winrate(context.Patch, candidate.Id, o) + Winrate(context.Patch, ally.Id, o)) / 2;
+            var brackets = RankBrackets.OpenDota(context.Profile.Rank);
+            double expected = (Winrate(context.Patch, candidate.Id, brackets) + Winrate(context.Patch, ally.Id, brackets)) / 2;
             double synergy = pairWr - expected;
             double conf = pair.Games / (pair.Games + (double)o.PairPriorGames);
             sum += synergy;
@@ -53,10 +55,10 @@ public sealed class PairSynergyEvaluator(Func<ScoringOptions> options) : ISynerg
         return new ComponentScore(Component, value, confSum / counted, reasons);
     }
 
-    private static double Winrate(PatchData patch, int heroId, ScoringOptions o)
+    private static double Winrate(PatchData patch, int heroId, IReadOnlyList<int> brackets)
     {
         if (!patch.HeroStats.TryGetValue(heroId, out var s)) return 0.5;
-        var b = s.Sum(o.MetaBrackets);
+        var b = s.Sum(brackets);
         return b.Picks > 0 ? (double)b.Wins / b.Picks : 0.5;
     }
 }

@@ -75,6 +75,28 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
+            <TextBlock Text="Ваш ранг" Style="{StaticResource H2}" FontSize="20" Margin="0,32,0,4" />
+            <TextBlock Style="{StaticResource MutedText}" FontSize="14" Margin="0,0,0,14"
+                       Text="Мета, позиции героев, матчапы и связки берутся по играм вашей группы рангов." />
+            <ItemsControl ItemsSource="{Binding Ranks}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><UniformGrid Columns="4" /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button x:Name="RankBtn" Content="{Binding Title}" Command="{Binding Select}"
+                                Style="{StaticResource GhostButton}" Margin="0,0,12,0" Padding="0,12" FontSize="14" />
+                        <DataTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter TargetName="RankBtn" Property="Background" Value="{StaticResource Accent}" />
+                                <Setter TargetName="RankBtn" Property="Foreground" Value="#09090B" />
+                                <Setter TargetName="RankBtn" Property="BorderBrush" Value="{StaticResource Accent}" />
+                            </DataTrigger>
+                        </DataTemplate.Triggers>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
             <UniformGrid Columns="3" Margin="0,28,0,0">
                 <Border Style="{StaticResource Card}" Margin="0,0,16,0">
                     <StackPanel>
@@ -93,8 +115,8 @@
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Text="ВЛИЯНИЕ НА ОЦЕНКУ" Style="{StaticResource Caps}" />
-                        <TextBlock Text="Role fit · 15%" Style="{StaticResource H2}" FontSize="20" Margin="0,6,0,4" />
-                        <TextBlock Text="Герои не под позицию опускаются в списке" Style="{StaticResource MutedText}" />
+                        <TextBlock Text="Позиция и ранг — основа" Style="{StaticResource H2}" FontSize="20" Margin="0,6,0,4" />
+                        <TextBlock Text="Героев, которых почти не играют на позиции, нет в списке" Style="{StaticResource MutedText}" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
             </UniformGrid>

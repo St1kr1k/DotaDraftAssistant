@@ -53,6 +53,16 @@ public sealed class PositionCard : ObservableObject
     }
 }
 
+/// <summary>Кнопка выбора группы рангов.</summary>
+public sealed class RankOption : ObservableObject
+{
+    private bool _isSelected;
+    public required RankBracket Rank { get; init; }
+    public required ICommand Select { get; init; }
+    public string Title => RankBrackets.Title(Rank);
+    public bool IsSelected { get => _isSelected; set => Set(ref _isSelected, value); }
+}
+
 /// <summary>Раздел «Позиция»: основная и запасная позиция, сводка по пулу героев.</summary>
 public sealed class PositionViewModel : ObservableObject
 {
@@ -73,11 +83,17 @@ public sealed class PositionViewModel : ObservableObject
             Card(Position.SoftSupport, "Soft support", "Сложная линия и роуминг. Контроль, ганки.", "top", false),
             Card(Position.HardSupport, "Hard support", "Лёгкая линия. Сейв, вижн, защита керри.", "bot", false),
         ];
+        Ranks = RankBrackets.All.Select(r => new RankOption
+        {
+            Rank = r,
+            Select = new RelayCommand(_ => _profile.Update(pr => pr.Rank = r)),
+        }).ToList();
         profile.Changed += (_, _) => Sync();
         Sync();
     }
 
     public IReadOnlyList<PositionCard> Cards { get; }
+    public IReadOnlyList<RankOption> Ranks { get; }
 
     public string MainHero => _profile.Current.MainHeroId is { } id ? _heroes.Find(id)?.LocalizedName ?? "—" : "не выбран";
     public string PoolTitle => $"ГЕРОИ ПОД POS {(int)_profile.Current.MyPosition} В ВАШЕМ ПУЛЕ";
@@ -107,6 +123,7 @@ public sealed class PositionViewModel : ObservableObject
             c.IsMain = c.Position == pr.MyPosition;
             c.IsSecondary = c.Position == pr.SecondaryPosition;
         }
+        foreach (var r in Ranks) r.IsSelected = r.Rank == pr.Rank;
 
         var pool = pr.Preferences
             .Where(kv => kv.Value is HeroPreference.Main or HeroPreference.Comfort)

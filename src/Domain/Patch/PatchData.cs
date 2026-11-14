@@ -42,6 +42,8 @@ public sealed record LaneStats(int HeroId, int VsHeroId, int Games, int Wins, in
 public sealed class PatchData
 {
     public string PatchName { get; init; } = "unknown";
+    /// <summary>Для какой группы рангов загружены позиции, матчапы, связки и линии.</summary>
+    public RankBracket Rank { get; init; } = RankBracket.LegendAncient;
     public DateTimeOffset FetchedAt { get; init; }
     public string Source { get; init; } = "none";
     public string MatchupSource { get; init; } = "none";
@@ -91,5 +93,6 @@ public sealed class PatchData
 
 public interface IPatchDataProvider
 {
-    PatchData Load();
+    /// <summary>Данные патча для группы рангов.</summary>
+    PatchData Load(RankBracket rank);
 }

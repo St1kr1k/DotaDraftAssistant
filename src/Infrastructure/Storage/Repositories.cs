@@ -59,25 +59,33 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
         _ => 0.8,
     };
 
-    public PatchData Load()
+    public PatchData Load(RankBracket rank)
     {
         var dir = DataFiles.PatchDir(dataDir);
+        // Данные STRATZ лежат по группам рангов: stratz_matchups_LEGEND_ANCIENT.json и т.д.
+        // Старые файлы без ранга (Legend–Immortal) используются, если файла для ранга нет.
+        string S(string kind)
+        {
+            var ranked = $"stratz_{kind}_{RankBrackets.Stratz(rank)}.json";
+            return File.Exists(Path.Combine(dir, ranked)) ? ranked : $"stratz_{kind}.json";
+        }
         try
         {
             var meta = Read<PatchMetaDto>(Path.Combine(dir, "meta.json")) ?? new PatchMetaDto();
             var stratz = Read<StratzMetaDto>(Path.Combine(dir, "stratz_meta.json")) ?? new StratzMetaDto();
             var stats = Read<List<HeroStatsDto>>(Path.Combine(dir, "hero_stats.json")) ?? [];
             // Один вид данных из нескольких источников: файлы читаются вместе и объединяются ниже.
-            var matchups = ReadAll<MatchupDto>(dir, "matchups.json", "stratz_matchups.json");
-            var positions = ReadAll<PositionDto>(dir, "positions.json", "stratz_positions.json");
-            var pairs = ReadAll<PairDto>(dir, "pairs.json", "stratz_pairs.json");
-            var lanes = ReadAll<LaneDto>(dir, "stratz_lanes.json");
+            var matchups = ReadAll<MatchupDto>(dir, "matchups.json", S("matchups"));
+            var positions = ReadAll<PositionDto>(dir, "positions.json", S("positions"));
+            var pairs = ReadAll<PairDto>(dir, "pairs.json", S("pairs"));
+            var lanes = ReadAll<LaneDto>(dir, S("lanes"));
             // Строки без источника — из старых файлов OpenDota.
             foreach (var m in matchups.Where(m => string.IsNullOrEmpty(m.Source))) m.Source = "opendota";
 
             return new PatchData
             {
                 PatchName = meta.Patch,
+                Rank = rank,
                 FetchedAt = meta.FetchedAt,
                 Source = meta.Source,
                 MatchupSource = Join(meta.MatchupSource, stratz.MatchupSource),

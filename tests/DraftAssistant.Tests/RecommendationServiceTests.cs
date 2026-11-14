@@ -230,4 +230,27 @@ public class RecommendationServiceTests
         Assert.True(axe.Components[ScoreComponent.Lane].Value < 0);
         Assert.Contains(axe.Reasons, r => r.Component == ScoreComponent.Lane && r.Text.Contains("линий"));
     }
+
+    [Fact]
+    public void Meta_uses_statistics_of_selected_rank()
+    {
+        // Axe силён на низких рангах и слаб на высоких.
+        var patch = new PatchData
+        {
+            PatchName = "test",
+            HeroStats = new Dictionary<int, HeroPatchStats>
+            {
+                [Axe.Id] = new(Axe.Id, new Dictionary<int, BracketStats>
+                {
+                    [1] = new(20000, 11200), [2] = new(20000, 11200),
+                    [7] = new(20000, 8800), [8] = new(20000, 8800),
+                }),
+            },
+        };
+        var low = new PlayerProfile { MyPosition = Position.Offlane, Rank = RankBracket.HeraldGuardian };
+        var high = new PlayerProfile { MyPosition = Position.Offlane, Rank = RankBracket.DivineImmortal };
+        var state = new DraftState(DraftPhase.DraftDetected, [], null, DateTimeOffset.UtcNow);
+        Assert.True(Service().Evaluate(Axe.Id, state, low, patch)!.Components[ScoreComponent.Meta].Value > 0);
+        Assert.True(Service().Evaluate(Axe.Id, state, high, patch)!.Components[ScoreComponent.Meta].Value < 0);
+    }
 }

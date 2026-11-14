@@ -79,7 +79,7 @@ public partial class App : System.Windows.Application
             return;
         }
         var patchProvider = new LocalPatchDataProvider(dataDir, _log);
-        var patch = patchProvider.Load();
+        var patch = patchProvider.Load(_profile.Current.Rank);
 
         // --- Infrastructure: «глаза» ---
         _capture = new GdiScreenCaptureService();
@@ -118,7 +118,7 @@ public partial class App : System.Windows.Application
         }
 
         // --- Application: «мозг» ---
-        var roles = new StatsRoleInference(() => patch, new RoleTagPositionPrior());
+        var roles = new StatsRoleInference(() => _pipeline is { Patch.PatchName: not "unknown" } p ? p.Patch : patch, new RoleTagPositionPrior());
         Func<ScoringOptions> scoring = () => _settings.Current.Scoring;
         IHeroEvaluator[] evaluators =
         [
