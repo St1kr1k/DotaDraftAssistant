@@ -45,6 +45,7 @@ public sealed class ItemDto
     public int Id { get; set; }
     public string Key { get; set; } = "";
     public string Name { get; set; } = "";
+    public int Cost { get; set; }
 }
 
 public sealed class AbilityDto

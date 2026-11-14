@@ -57,6 +57,12 @@ public sealed class DraftPipeline
     private readonly IPatchDataProvider _patchProvider;
     private readonly GamePlanService? _plans;
     private GamePlan? _plan;
+    private string? _draftId;
+    private readonly Dictionary<SlotId, int?> _loggedSlots = new();
+    private DraftSide? _loggedSide;
+    private int? _loggedMySlot;
+    private int _framesSaved;
+    private int _framesPicks = -1;
     private string _planKey = "";
     private readonly Func<PlayerProfile> _profile;
     private readonly AppSettings _settings;
@@ -158,6 +164,16 @@ public sealed class DraftPipeline
         var hint = FreshHint();
         var external = hint?.State ?? ExternalGameState.Unknown;
 
+        // Во время самой игры полоска героев сверху похожа на экран драфта. Это не драфт, если:
+        // GSI говорит, что идёт игра, или «драфт» появился сразу почти со всеми выбранными героями.
+        if (observation.DraftScreenVisible)
+        {
+            int rawPicks = observation.Slots.Count(s => s.Slot.Kind == SlotKind.Pick && s.Content == ObservedContent.Hero);
+            bool inGame = external == ExternalGameState.InGame
+                          || (_machine.Phase == DraftPhase.Idle && rawPicks >= 8);
+            if (inGame) observation = observation with { DraftScreenVisible = false };
+        }
+
         bool slotsChanged = false;
         if (observation.DraftScreenVisible && _machine.Phase != DraftPhase.Completed)
             slotsChanged = _tracker.Update(observation.Slots);
@@ -170,7 +186,13 @@ public sealed class DraftPipeline
         var transition = _machine.Update(observation.DraftScreenVisible, external, picks, totalPicks, bans);
         if (transition is { From: DraftPhase.Idle, To: DraftPhase.DraftDetected })
         {
-            _log.Info("Draft detected — новый драфт, состояние сброшено");
+            _draftId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            _loggedSlots.Clear();
+            _loggedSide = null;
+            _loggedMySlot = null;
+            _framesSaved = 0;
+            _framesPicks = -1;
+            _log.Info($"Draft detected — новый драфт {_draftId}, состояние сброшено");
             _tracker.Reset();
             _positions.Clear();
             _chatBans.Clear();
@@ -200,12 +222,51 @@ public sealed class DraftPipeline
             ? "Разметка экрана драфта не откалибрована (Ctrl+Shift+D → Калибровка)"
             : null;
 
+        LogDraftChanges(state, sideSource, hint, slotsChanged || transition is not null);
+
         bool sideChanged = _last?.State.MySide != side;
         bool ownPickedChanged = _last is not null && _last.OwnHeroPicked != OwnHeroPicked(state, hint);
         bool changed = slotsChanged || transition is not null || sideChanged || _recommendationsDirty
                        || _last?.Status != status || ownPickedChanged || textChanged;
         if (changed)
             Publish(state, status, message, sideSource, observation.ScreenConfidence, force: true);
+    }
+
+    /// <summary>
+    /// Подробный лог драфта: какие герои распознаны, какая сторона и откуда, какой слот ваш.
+    /// Плюс кадр экрана на каждом новом пике (если включено сохранение кадров) — по ним видно,
+    /// где распознавание ошиблось.
+    /// </summary>
+    private void LogDraftChanges(DraftState state, SideSource sideSource, GameStateHint? hint, bool slotsMaybeChanged)
+    {
+        if (_machine.Phase == DraftPhase.Idle || _draftId is null) return;
+
+        if (slotsMaybeChanged)
+        {
+            foreach (var s in state.Slots.Where(s => s.Status == SlotStatus.Confirmed))
+            {
+                if (_loggedSlots.TryGetValue(s.Id, out var prev) && prev == s.HeroId) continue;
+                _loggedSlots[s.Id] = s.HeroId;
+                var name = s.HeroId is { } id ? _heroes.Find(id)?.LocalizedName ?? $"#{id}" : "?";
+                _log.Info($"Слот {s.Id}: {name} ({s.Confidence:F2})");
+            }
+            int picks = state.Slots.Count(s => s.Id.Kind == SlotKind.Pick && s.Status == SlotStatus.Confirmed);
+            if (picks != _framesPicks)
+            {
+                _framesPicks = picks;
+                if (_framesSaved++ < 14) _detector.SaveDebugFrame(_draftId, $"picks{picks}");
+            }
+        }
+        if (state.MySide != _loggedSide)
+        {
+            _loggedSide = state.MySide;
+            _log.Info($"Сторона: {state.MySide?.ToString() ?? "не определена"} (источник: {sideSource}; GSI: {(hint is null ? "нет" : $"{hint.State}, team={hint.Team}, hero={hint.OwnHeroId}")})");
+        }
+        if (state.MySlotIndex != _loggedMySlot)
+        {
+            _loggedMySlot = state.MySlotIndex;
+            _log.Info($"Мой слот: {state.MySlotIndex?.ToString() ?? "не найден"}; позиций прочитано: {state.Positions.Count}");
+        }
     }
 
     private GameStateHint? FreshHint()
@@ -309,6 +370,9 @@ public sealed class DraftPipeline
             _currentScores = all.ToDictionary(r => r.Hero.Id, r => r.Score);
             recs = all.Take(_settings.Pipeline.RecommendationCount).ToList();
             _recommendationsDirty = false;
+            if (state.Phase != DraftPhase.Idle)
+                _log.Info($"Рекомендации (pos {(int)position}, союзников {state.AllyPicks.Count}, врагов {state.EnemyPicks.Count}): " +
+                          string.Join(", ", recs.Take(3).Select(r => $"{r.Hero.LocalizedName} {r.Score:F0}")));
         }
 
         var enemyRoles = state.EnemyPicks

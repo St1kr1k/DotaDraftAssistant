@@ -50,7 +50,7 @@ jobs:
           path: |
             data/heroes
             data/patch
-          key: dota-data-v3-${{ steps.week.outputs.key }}
+          key: dota-data-v4-${{ steps.week.outputs.key }}
           restore-keys: dota-data-
 
       - name: Данные героев и патча (OpenDota / Steam CDN)
@@ -73,7 +73,7 @@ jobs:
           path: |
             data/heroes
             data/patch
-          key: dota-data-v3-${{ steps.week.outputs.key }}
+          key: dota-data-v4-${{ steps.week.outputs.key }}
 
       # STRATZ: точные позиции, связки, исходы линий — только если в репозитории есть секрет STRATZ_TOKEN.
       # Все запросы идут из одной сборки: STRATZ пускает токен максимум с 2 IP за 15 минут.

@@ -17,7 +17,8 @@ public enum DetectionMode { None, Automatic, Manual }
 public sealed class VisualDraftDetector : IDraftDetector
 {
     private const int TextEveryTicks = 12;       // ~1.5 с при 8 FPS
-    private const int MaxDebugFrames = 6;
+    /// <summary>Сколько последних драфтов хранить в папке debug.</summary>
+    private const int MaxDebugDrafts = 3;
 
     private readonly IScreenCaptureService _capture;
     private readonly DraftFrameAnalyzer _analyzer;
@@ -30,8 +31,9 @@ public sealed class VisualDraftDetector : IDraftDetector
     private int _tick;
     private int _missedGrid;
     private DraftTextInfo? _lastText;
-    private DateTimeOffset _draftSeenAt = DateTimeOffset.MinValue;
     private int _debugSavedThisDraft;
+    private (GameWindowInfo Window, int W, int H)? _lastWindow;
+    private string? _debugDraftId;
 
     public VisualDraftDetector(
         IScreenCaptureService capture,
@@ -68,6 +70,7 @@ public sealed class VisualDraftDetector : IDraftDetector
         if (window.IsMinimized) return new DraftObservation(false, 0, [], ObservationIssue.None, now);
 
         int w = window.ClientRect.Width, h = window.ClientRect.Height;
+        _lastWindow = (window, w, h);
         return _analyzer.IsCalibrated ? ObserveManual(window, w, h, now) : ObserveAuto(window, w, h, now);
     }
 
@@ -100,14 +103,12 @@ public sealed class VisualDraftDetector : IDraftDetector
             {
                 _grid = null;
                 _lastText = null;
-                _debugSavedThisDraft = 0;
                 return new DraftObservation(false, 0, [], ObservationIssue.None, now);
             }
         }
         else
         {
             _missedGrid = 0;
-            if (_grid is null) _draftSeenAt = now;
             // Держим прежнюю сетку, если новая совпадает с точностью до пикселей — кэш слотов не сбрасывается.
             if (_grid is null || !grid.SameAs(_grid)) _grid = grid;
             grid = _grid;
@@ -120,7 +121,6 @@ public sealed class VisualDraftDetector : IDraftDetector
         if (_text is { Available: true } && (_lastText is null || _tick % TextEveryTicks == 0))
             _lastText = ReadText(window, top, grid, w, h);
 
-        MaybeSaveDebugFrame(window, w, h, now);
 
         var t = _lastText;
         return LastAnalysis.Observation with
@@ -149,33 +149,34 @@ public sealed class VisualDraftDetector : IDraftDetector
     }
 
     /// <summary>
-    /// Сохраняет пару полных кадров драфта локально (%APPDATA%\DotaDraftAssistant\debug), чтобы при
-    /// проблемах с распознаванием было что приложить к сообщению об ошибке. Никуда не отправляется.
+    /// Сохраняет полный кадр драфта локально (%APPDATA%\DotaDraftAssistant\debug\&lt;драфт&gt;), чтобы при
+    /// проблемах с распознаванием было что разобрать. Никуда не отправляется. Хранятся последние 3 драфта.
     /// </summary>
-    private void MaybeSaveDebugFrame(GameWindowInfo window, int w, int h, DateTimeOffset now)
+    public void SaveDebugFrame(string draftId, string tag)
     {
-        if (_debugDir is null || !_saveDebugFrames() || _debugSavedThisDraft >= 2) return;
-        bool due = _debugSavedThisDraft == 0
-            ? now - _draftSeenAt > TimeSpan.FromSeconds(2)
-            : now - _draftSeenAt > TimeSpan.FromSeconds(45);
-        if (!due) return;
-
+        if (_debugDir is null || !_saveDebugFrames() || _lastWindow is not { } lw) return;
+        if (draftId != _debugDraftId) { _debugDraftId = draftId; _debugSavedThisDraft = 0; }
+        if (_debugSavedThisDraft >= 16) return;
         try
         {
-            var frame = _capture.Capture(window, new PixelRect(0, 0, w, h));
+            var frame = _capture.Capture(lw.Window, new PixelRect(0, 0, lw.W, lw.H));
             if (frame is null) return;
-            Directory.CreateDirectory(_debugDir);
+            var dir = Path.Combine(_debugDir, $"draft_{draftId}");
+            Directory.CreateDirectory(dir);
             using var mat = CvImage.ToBgrMat(frame);
-            Cv2.ImWrite(Path.Combine(_debugDir, $"draft_{DateTime.Now:yyyyMMdd_HHmmss}.png"), mat);
+            Cv2.ImWrite(Path.Combine(dir, $"{DateTime.Now:HHmmss}_{tag}.png"), mat);
             _debugSavedThisDraft++;
 
-            foreach (var old in new DirectoryInfo(_debugDir).GetFiles("draft_*.png")
-                         .OrderByDescending(f => f.CreationTimeUtc).Skip(MaxDebugFrames))
-                old.Delete();
+            foreach (var old in new DirectoryInfo(_debugDir).GetDirectories("draft_*")
+                         .OrderByDescending(d => d.CreationTimeUtc).Skip(MaxDebugDrafts))
+                old.Delete(recursive: true);
+            foreach (var old in new DirectoryInfo(_debugDir).GetFiles("draft_*.png"))
+                old.Delete(); // кадры старого формата
         }
         catch (Exception)
         {
             // Отладочные кадры не должны мешать работе.
         }
+    }
     }
 }

@@ -74,3 +74,31 @@ public class GamePlanServiceTests
         Assert.Empty(plan.ItemTips);
     }
 }
+
+public class StartItemsTests
+{
+    [Fact]
+    public void Start_build_fills_starting_gold_with_most_common_items()
+    {
+        var items = new Dictionary<int, DraftAssistant.Infrastructure.Storage.ItemDto>
+        {
+            [44] = new() { Id = 44, Name = "Tango", Cost = 90 },
+            [16] = new() { Id = 16, Name = "Iron Branch", Cost = 50 },
+            [20] = new() { Id = 20, Name = "Circlet", Cost = 155 },
+            [237] = new() { Id = 237, Name = "Faerie Fire", Cost = 70 },
+            [29] = new() { Id = 29, Name = "Boots", Cost = 500 },
+        };
+        DraftAssistant.Infrastructure.Storage.StartItemDto R(int item, int inst, int games) =>
+            new() { HeroId = 92, Position = 2, ItemId = item, Instance = inst, Games = games, PositionGames = 1000 };
+        var rows = new List<DraftAssistant.Infrastructure.Storage.StartItemDto>
+        {
+            R(44, 1, 950), R(16, 1, 800), R(16, 2, 700), R(20, 1, 450), R(237, 1, 300), R(29, 1, 160),
+        };
+
+        var built = DraftAssistant.Infrastructure.Storage.LocalPatchDataProvider.BuildStartItems(rows, items)[(92, Position.Mid)];
+
+        Assert.Equal(["Tango", "Iron Branch", "Circlet", "Faerie Fire"], built.Select(i => i.Name));
+        Assert.Equal(2, built.Single(i => i.Name == "Iron Branch").Count);
+        Assert.True(built.Sum(i => items[i.ItemId].Cost * i.Count) <= 600);
+    }
+}

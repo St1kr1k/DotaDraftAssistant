@@ -45,6 +45,9 @@ public interface IDraftDetector
 {
     IReadOnlyList<SlotId> Slots { get; }
     DraftObservation? Observe();
+
+    /// <summary>Сохранить кадр для разбора ошибок (только локально, если включено в настройках).</summary>
+    void SaveDebugFrame(string draftId, string tag) { }
 }
 
 public enum ExternalGameState { Unknown, HeroSelection, PostDraft, InGame }

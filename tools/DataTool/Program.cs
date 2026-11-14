@@ -297,7 +297,7 @@ internal static class Program
         foreach (var (key, node) in itemsJson)
         {
             if (node is not JsonObject it || it["id"] is null) continue;
-            items.Add(new ItemDto { Id = Num(it["id"]), Key = key, Name = Str(it["dname"]) ?? key });
+            items.Add(new ItemDto { Id = Num(it["id"]), Key = key, Name = Str(it["dname"]) ?? key, Cost = Num(it["cost"]) });
         }
         await File.WriteAllTextAsync(Path.Combine(patchDir, "items.json"), JsonSerializer.Serialize(items.OrderBy(i => i.Id), DataFiles.Json));
 

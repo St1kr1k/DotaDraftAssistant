@@ -96,14 +96,21 @@ public sealed class DraftTextReader
             if (allySide is { } ally)
                 foreach (var k in roles.Keys.Where(k => k.Side != ally).ToList()) roles.Remove(k);
 
-            if (allySide is { } s && !string.IsNullOrWhiteSpace(playerName))
+            if (!string.IsNullOrWhiteSpace(playerName))
             {
-                var band = grid.TeamBand(s, PlayerBarGrid.NameTop, PlayerBarGrid.NameBottom);
-                var words = Recognize(_localized, top, band);
-                var centers = Enumerable.Range(0, 5).Select(i => grid.Center(s, i)).ToList();
-                foreach (var (index, text) in DraftTextParsing.AssignToSlots(words, centers, maxGap: grid.Pitch * 0.08))
+                // Ник ищем на стороне с подписями ролей, а если их не нашлось — на обеих:
+                // сторона, где нашёлся ваш ник, и есть ваша команда (обычный пик, без подписей ролей).
+                var sides = allySide is { } known ? new[] { known } : new[] { DraftSide.Radiant, DraftSide.Dire };
+                foreach (var s in sides)
                 {
-                    if (DraftTextParsing.NameMatches(text, playerName)) { ownSlot = index; break; }
+                    var band = grid.TeamBand(s, PlayerBarGrid.NameTop, PlayerBarGrid.NameBottom);
+                    var words = Recognize(_localized, top, band);
+                    var centers = Enumerable.Range(0, 5).Select(i => grid.Center(s, i)).ToList();
+                    foreach (var (index, text) in DraftTextParsing.AssignToSlots(words, centers, maxGap: grid.Pitch * 0.08))
+                    {
+                        if (DraftTextParsing.NameMatches(text, playerName)) { ownSlot = index; allySide ??= s; break; }
+                    }
+                    if (ownSlot is not null) break;
                 }
             }
         }

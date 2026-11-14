@@ -80,7 +80,7 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             var pairs = ReadAll<PairDto>(dir, "pairs.json", S("pairs"));
             var lanes = ReadAll<LaneDto>(dir, S("lanes"));
             var startItems = ReadAll<StartItemDto>(dir, S("startitems"));
-            var itemNames = ReadAll<ItemDto>(dir, "items.json").GroupBy(i => i.Id).ToDictionary(g => g.Key, g => g.First().Name);
+            var itemInfo = ReadAll<ItemDto>(dir, "items.json").GroupBy(i => i.Id).ToDictionary(g => g.Key, g => g.First());
             var abilities = ReadAll<HeroAbilitiesDto>(dir, "abilities.json");
             // Строки без источника — из старых файлов OpenDota.
             foreach (var m in matchups.Where(m => string.IsNullOrEmpty(m.Source))) m.Source = "opendota";
@@ -102,7 +102,7 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
                         var m = g.MaxBy(x => x.Games)!;
                         return new KdaStats(m.HeroId, m.VsHeroId, m.Games, m.KillsPerGame!.Value, m.DeathsPerGame!.Value);
                     }),
-                StartItems = BuildStartItems(startItems, itemNames),
+                StartItems = BuildStartItems(startItems, itemInfo),
                 Abilities = abilities.ToDictionary(
                     h => h.HeroId,
                     h => (IReadOnlyList<AbilityInfo>)h.Abilities
@@ -194,13 +194,16 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
     }
 
     /// <summary>
-    /// Стартовая закупка: предмет попадает в список, если его берут хотя бы в 40% игр героя на позиции;
-    /// количество — сколько экземпляров берут в 40%+ игр.
+    /// Стартовая закупка — самый частый полный набор на стартовое золото:
+    /// экземпляры предметов берутся по убыванию популярности, пока укладываются в 600 золота
+    /// и их берут хотя бы в 15% игр героя на позиции. (Только самые частые предметы давали
+    /// неполный набор на 300 золота.) Без цен — предметы, которые берут в 40%+ игр.
     /// </summary>
-    private static Dictionary<(int Hero, Position Position), IReadOnlyList<StartItem>> BuildStartItems(
-        List<StartItemDto> rows, Dictionary<int, string> names)
+    internal static Dictionary<(int Hero, Position Position), IReadOnlyList<StartItem>> BuildStartItems(
+        List<StartItemDto> rows, Dictionary<int, ItemDto> items)
     {
-        const double MinShare = 0.4;
+        const int StartingGold = 600;
+        bool haveCosts = items.Values.Any(i => i.Cost > 0);
         var result = new Dictionary<(int, Position), IReadOnlyList<StartItem>>();
         foreach (var g in rows.Where(r => r.Position is >= 1 and <= 5).GroupBy(r => (r.HeroId, Pos: (Position)r.Position)))
         {
@@ -210,20 +213,32 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             if (total <= 0 || maxGames > total * 1.2 || maxGames < total * 0.3) total = maxGames;
             if (total <= 0) continue;
 
-            var items = g.GroupBy(r => r.ItemId)
-                .Select(ig =>
-                {
-                    var common = ig.Where(r => (double)r.Games / total >= MinShare).ToList();
-                    if (common.Count == 0) return null;
-                    // Номер экземпляра в данных может начинаться с 0 или 1 — считаем число частых экземпляров.
-                    int count = common.Select(r => r.Instance).Distinct().Count();
-                    double share = Math.Min(1, (double)ig.Max(r => r.Games) / total);
-                    return new StartItem(ig.Key, names.GetValueOrDefault(ig.Key, $"item {ig.Key}"), count, share);
-                })
-                .OfType<StartItem>()
+            // Экземпляры одного предмета: 1-й, 2-й, … (номер может начинаться с 0 или 1).
+            var copies = g.GroupBy(r => r.ItemId)
+                .SelectMany(ig => ig.GroupBy(r => r.Instance).OrderBy(x => x.Key)
+                    .Select((x, n) => (Item: ig.Key, Copy: n + 1, Share: Math.Min(1, (double)x.Sum(r => r.Games) / total))))
+                .OrderByDescending(c => c.Share)
+                .ToList();
+
+            var chosen = new Dictionary<int, (int Count, double Share)>();
+            int gold = 0;
+            foreach (var c in copies)
+            {
+                if (c.Share < (haveCosts ? 0.15 : 0.4)) break;
+                int have = chosen.TryGetValue(c.Item, out var h) ? h.Count : 0;
+                if (c.Copy != have + 1) continue; // 2-й экземпляр — только вместе с 1-м
+                int cost = items.TryGetValue(c.Item, out var info) ? info.Cost : 0;
+                if (haveCosts && gold + cost > StartingGold) continue;
+                gold += cost;
+                chosen[c.Item] = (have + 1, have == 0 ? c.Share : h.Share);
+            }
+
+            var list = chosen
+                .Select(kv => new StartItem(kv.Key, items.TryGetValue(kv.Key, out var info) ? info.Name : $"item {kv.Key}",
+                                            kv.Value.Count, kv.Value.Share))
                 .OrderByDescending(i => i.Share)
                 .ToList();
-            if (items.Count > 0) result[(g.Key.HeroId, g.Key.Pos)] = items;
+            if (list.Count > 0) result[(g.Key.HeroId, g.Key.Pos)] = list;
         }
         return result;
     }
