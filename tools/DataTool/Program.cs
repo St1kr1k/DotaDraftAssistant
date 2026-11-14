@@ -79,14 +79,14 @@ internal static class Program
     {
         var dataDir = Path.GetFullPath(Opt(o, "out", "data"));
         var apiKey = o.GetValueOrDefault("api-key");
-        int delay = int.Parse(Opt(o, "delay-ms", apiKey is null ? "1100" : "100"));
+        int delay = int.Parse(Opt(o, "delay-ms", apiKey is null ? "1500" : "100"));
         string Q(string url) => apiKey is null ? url : $"{url}{(url.Contains('?') ? '&' : '?')}api_key={apiKey}";
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd("DotaDraftAssistant-DataTool/0.1");
 
         Console.WriteLine("Герои…");
-        var heroesJson = await http.GetFromJsonAsync<JsonObject>(Q($"{OpenDota}/constants/heroes"))
+        var heroesJson = await GetJson<JsonObject>(http, Q($"{OpenDota}/constants/heroes"))
                          ?? throw new InvalidOperationException("пустой ответ constants/heroes");
         var heroes = new List<HeroDto>();
         Directory.CreateDirectory(DataFiles.HeroesDir(dataDir));
@@ -132,10 +132,10 @@ internal static class Program
         Console.WriteLine("Патч и статистика…");
         var patchDir = DataFiles.PatchDir(dataDir);
         Directory.CreateDirectory(patchDir);
-        var patches = await http.GetFromJsonAsync<JsonArray>(Q($"{OpenDota}/constants/patch"));
+        var patches = await GetJson<JsonArray>(http, Q($"{OpenDota}/constants/patch"));
         string patchName = patches?.LastOrDefault()?["name"]?.GetValue<string>() ?? "unknown";
 
-        var statsJson = await http.GetFromJsonAsync<JsonArray>(Q($"{OpenDota}/heroStats")) ?? new JsonArray();
+        var statsJson = await GetJson<JsonArray>(http, Q($"{OpenDota}/heroStats")) ?? new JsonArray();
         var stats = statsJson.OfType<JsonObject>().Select(s => new HeroStatsDto
         {
             HeroId = s["id"]!.GetValue<int>(),
@@ -150,12 +150,24 @@ internal static class Program
         await File.WriteAllTextAsync(Path.Combine(patchDir, "hero_stats.json"), JsonSerializer.Serialize(stats, DataFiles.Json));
 
         var matchups = new List<MatchupDto>();
+        int failedMatchups = 0;
         if (!o.ContainsKey("no-matchups"))
         {
             Console.WriteLine($"Матчапы ({heroes.Count} запросов, пауза {delay} мс)…");
             foreach (var hero in heroes)
             {
-                var arr = await http.GetFromJsonAsync<JsonArray>(Q($"{OpenDota}/heroes/{hero.Id}/matchups")) ?? new JsonArray();
+                JsonArray arr;
+                try
+                {
+                    arr = await GetJson<JsonArray>(http, Q($"{OpenDota}/heroes/{hero.Id}/matchups")) ?? new JsonArray();
+                }
+                catch (HttpRequestException ex)
+                {
+                    // Матчапы одного героя не должны ронять весь релиз: без них Counter честно будет нейтральным.
+                    Console.Error.WriteLine($"\n  матчапы {hero.LocalizedName} пропущены: {ex.Message}");
+                    failedMatchups++;
+                    continue;
+                }
                 matchups.AddRange(arr.OfType<JsonObject>().Select(m => new MatchupDto
                 {
                     HeroId = hero.Id,
@@ -168,6 +180,8 @@ internal static class Program
             }
             Console.WriteLine();
             await File.WriteAllTextAsync(Path.Combine(patchDir, "matchups.json"), JsonSerializer.Serialize(matchups, DataFiles.Json));
+            if (failedMatchups > heroes.Count / 4)
+                throw new InvalidOperationException($"слишком много пропущенных матчапов: {failedMatchups}");
         }
 
         var meta = new PatchMetaDto
@@ -180,6 +194,28 @@ internal static class Program
         await File.WriteAllTextAsync(Path.Combine(patchDir, "meta.json"), JsonSerializer.Serialize(meta, DataFiles.Json));
         Console.WriteLine($"Готово: {dataDir} (патч {patchName}, матчапов {matchups.Count})");
         return 0;
+    }
+
+    /// <summary>
+    /// GET JSON с повторами: на 429 (лимит OpenDota) и 5xx ждём Retry-After или нарастающую паузу.
+    /// </summary>
+    private static async Task<T?> GetJson<T>(HttpClient http, string url)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            using var response = await http.GetAsync(url);
+            int code = (int)response.StatusCode;
+            if (response.IsSuccessStatusCode)
+                return await response.Content.ReadFromJsonAsync<T>();
+
+            bool retryable = code == 429 || code >= 500;
+            if (!retryable || attempt >= 6)
+                throw new HttpRequestException($"{code} {response.ReasonPhrase} ({url.Split('?')[0]})", null, response.StatusCode);
+
+            var wait = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(20 * attempt);
+            Console.Error.WriteLine($"\n  {code}, повтор через {wait.TotalSeconds:0} с…");
+            await Task.Delay(wait);
+        }
     }
 
     private static string ImageUrl(string? path, string fallback)
