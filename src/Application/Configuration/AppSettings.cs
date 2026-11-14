@@ -47,6 +47,13 @@ public sealed class RecognitionOptions
 {
     /// <summary>Ширина рабочего изображения слота; высота считается из пропорций слота.</summary>
     public int WorkWidth { get; set; } = 64;
+    /// <summary>Во сколько раз арт героя в верхней панели драфта крупнее портрета из данных.</summary>
+    public double PortraitZoom { get; set; } = 1.2;
+    /// <summary>
+    /// Минимальный контраст (СКО яркости) выбранного героя. Затемнённый портрет — это герой,
+    /// на которого игрок только навёл курсор, а не пик.
+    /// </summary>
+    public double MinHeroStdDev { get; set; } = 25;
     /// <summary>Доля, отрезаемая с каждой стороны слота перед сравнением (рамки, неточность калибровки).</summary>
     public double InnerMargin { get; set; } = 0.1;
     /// <summary>

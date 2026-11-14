@@ -173,7 +173,7 @@ public sealed class DraftFrameAnalyzer
         else
         {
             rec = _recognizer.Recognize(crop, id.Kind);
-            obs = rec.HeroId is { } hero
+            obs = rec.HeroId is { } hero && !(id.Kind == SlotKind.Pick && IsDimmed(crop, o))
                 ? new SlotObservation(id, ObservedContent.Hero, hero, rec.Confidence)
                 : new SlotObservation(id, ObservedContent.Unknown, null, rec.Confidence);
         }
@@ -181,6 +181,15 @@ public sealed class DraftFrameAnalyzer
         if (_cache.TryGetValue(id, out var old)) old.Thumb.Dispose();
         _cache[id] = (thumb, obs, rec);
         return new SlotAnalysis(id, rect, obs, rec, false);
+    }
+
+    /// <summary>Затемнённый (наведённый, но не выбранный) герой в слоте пика.</summary>
+    private static bool IsDimmed(Mat crop, RecognitionOptions o)
+    {
+        if (o.MinHeroStdDev <= 0) return false;
+        using var small = CvImage.Resize(crop, new Size(o.WorkWidth, Math.Max(8, o.WorkWidth * crop.Height / Math.Max(1, crop.Width))));
+        using var gray = CvImage.ToGray(small);
+        return CvImage.StdDev(gray) < o.MinHeroStdDev;
     }
 
     private static Mat MakeThumb(Mat crop)

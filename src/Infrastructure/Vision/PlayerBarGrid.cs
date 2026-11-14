@@ -21,8 +21,11 @@ public sealed record PlayerBarGrid(
     int DetectedBars)
 {
     // Смещения по вертикали от линии полосок, в долях шага (сняты со скриншота драфта).
-    public const double PortraitTop = -0.53;
-    public const double PortraitBottom = -0.17;
+    // Портрет — между верхней полоской (у выбравших героя) и нижней (у пустых слотов).
+    public const double PortraitTop = -0.49;
+    public const double PortraitBottom = -0.04;
+    /// <summary>Слоты — параллелограммы: верх смещён к центру экрана примерно на 0.0725 шага.</summary>
+    public const double Skew = 0.0725;
     public const double NameTop = 0.10;
     public const double NameBottom = 0.27;
     public const double RoleTop = 0.27;
@@ -40,7 +43,12 @@ public sealed record PlayerBarGrid(
     }
 
     /// <summary>Карточка героя (над рангом игрока).</summary>
-    public PixelRect Portrait(DraftSide side, int index) => Band(side, index, PortraitTop, PortraitBottom, BarWidth);
+    public PixelRect Portrait(DraftSide side, int index)
+    {
+        var r = Band(side, index, PortraitTop, PortraitBottom, BarWidth);
+        int shift = (int)Math.Round(Skew / 2 * Pitch) * (side == DraftSide.Radiant ? -1 : 1);
+        return r with { X = r.X + shift };
+    }
 
     /// <summary>Ник игрока.</summary>
     public PixelRect Name(DraftSide side, int index) => Band(side, index, NameTop, NameBottom, Pitch);
@@ -74,6 +82,9 @@ public static class PlayerBarGridDetector
 
     /// <param name="topBgr">Верхняя часть клиентской области (BGR), начиная с y = 0.</param>
     /// <param name="clientWidth">Ширина клиентской области (topBgr должен быть той же ширины).</param>
+    /// <summary>Нижняя полоска на 0.532 шага ниже верхней (замерено на 1440p; в долях шага не зависит от разрешения).</summary>
+    public const double TopToBottomBars = 0.532;
+
     public static PlayerBarGrid? Detect(Mat topBgr, int clientWidth)
     {
         int W = topBgr.Width, H = topBgr.Height;
@@ -92,44 +103,48 @@ public static class PlayerBarGridDetector
         using var mask = new Mat();
         Cv2.BitwiseAnd(satMask, valMask, mask);
 
-        // 1. Строка с наибольшим числом насыщенных пикселей — линия полосок.
-        int bestY = -1, bestCount = 0;
+        var counts = new int[H];
         for (int y = 0; y < H; y++)
         {
             using var row = mask.Row(y);
-            int c = Cv2.CountNonZero(row);
-            if (c > bestCount) { bestCount = c; bestY = y; }
+            counts[y] = Cv2.CountNonZero(row);
         }
-        if (bestY < 0 || bestCount < W * 0.12) return null;
 
-        // 2. Горизонтальные отрезки в полосе ±2 px.
-        int y0 = Math.Max(0, bestY - 2), y1 = Math.Min(H, bestY + 3);
-        using var band = new Mat(mask, new Rect(0, y0, W, y1 - y0));
-        using var colMax = new Mat();
-        Cv2.Reduce(band, colMax, ReduceDimension.Row, ReduceTypes.Max, MatType.CV_8U);
-        var on = new bool[W];
-        for (int x = 0; x < W; x++) on[x] = colMax.At<byte>(0, x) > 0;
+        // Цветная полоска игрока: у пустого слота — под портретом, у выбравшего героя — над ним (у самого края экрана).
+        // Ищем обе строки отдельно: раньше бралась одна «самая цветная», и после 5 пиков сетка уезжала.
+        int edge = Math.Max(4, (int)(H / SearchHeight * 0.015));
+        var (topY, topMax) = BandCenter(counts, 0, Math.Min(edge, H));
+        var (botY, botMax) = BandCenter(counts, Math.Min(H - 1, (int)(H / SearchHeight * 0.03)), H);
+        var topSegs = topMax >= W * 0.04 ? Segments(mask, (int)Math.Round(topY), W) : [];
+        var botSegs = botMax >= W * 0.04 ? Segments(mask, (int)Math.Round(botY), W) : [];
+        if (topSegs.Count + botSegs.Count < 6) return null;
 
-        var centers = new List<double>();
-        var widths = new List<double>();
-        for (int x = 0; x < W;)
+        // Шаг между слотами: медиана соседних расстояний правдоподобной величины (по каждой строке отдельно).
+        var diffs = new List<double>();
+        foreach (var segs in new[] { topSegs, botSegs })
         {
-            if (!on[x]) { x++; continue; }
-            int s = x;
-            while (x < W && on[x]) x++;
-            if (x - s >= W * 0.015) { centers.Add((s + x) / 2.0); widths.Add(x - s); }
+            var cs = segs.Select(s => s.Center).OrderBy(c => c).ToList();
+            diffs.AddRange(cs.Zip(cs.Skip(1), (a, b) => b - a).Where(d => d > W * 0.05 && d < W * 0.085));
         }
-        if (centers.Count < 6) return null;
-
-        // 3. Шаг между слотами: медиана соседних расстояний правдоподобной величины.
-        var diffs = centers.Zip(centers.Skip(1), (a, b) => b - a).Where(d => d > W * 0.05 && d < W * 0.085).OrderBy(d => d).ToList();
         if (diffs.Count == 0) return null;
+        diffs.Sort();
         double pitch = diffs[diffs.Count / 2];
         double mid = W / 2.0;
 
-        // 4. Подгонка сетки из 5 слотов на каждую сторону (пропущенные полоски восстанавливаются по шагу).
-        //    Если крайняя полоска не видна, сдвинутые варианты дают одинаковое число совпадений —
-        //    тогда выбираем пару сеток, симметричную относительно центра экрана (часы драфта посередине).
+        // Линия нижних полосок: по нижним, если они на ожидаемом месте, иначе — от верхних.
+        double expected = topY + TopToBottomBars * pitch;
+        bool bottomValid = botSegs.Count > 0 && (topSegs.Count == 0 || Math.Abs(botY - expected) < 0.1 * pitch);
+        double barY = bottomValid ? botY : topSegs.Count > 0 ? expected : botY;
+
+        // Центры слотов: нижние как есть, верхние сдвинуты к центру экрана — возвращаем их на ось нижних.
+        var centers = (bottomValid ? botSegs.Select(s => s.Center) : [])
+            .Concat(topSegs.Select(s => s.Center + (s.Center < mid ? 1 : -1) * PlayerBarGrid.Skew * pitch))
+            .OrderBy(c => c).ToList();
+        var widths = (bottomValid ? botSegs : []).Concat(topSegs).Select(s => (double)s.Width).OrderBy(w => w).ToList();
+
+        // Подгонка сетки из 5 слотов на каждую сторону (пропущенные полоски восстанавливаются по шагу).
+        // Если крайняя полоска не видна, сдвинутые варианты дают одинаковое число совпадений —
+        // тогда выбираем пару сеток, симметричную относительно центра экрана (часы драфта посередине).
         var leftCandidates = Candidates(centers.Where(c => c < mid).ToList(), pitch).Where(g => g.Grid[^1] < mid).ToList();
         var rightCandidates = Candidates(centers.Where(c => c > mid).ToList(), pitch).Where(g => g.Grid[0] > mid).ToList();
         if (leftCandidates.Count == 0 || rightCandidates.Count == 0) return null;
@@ -151,9 +166,36 @@ public static class PlayerBarGridDetector
         }
         if (bestHits < 7) return null;
 
-        widths.Sort();
         double barWidth = Math.Min(widths[widths.Count / 2], pitch * 0.95);
-        return new PlayerBarGrid(bestY, pitch, barWidth, bestLeft.Grid, bestRight.Grid, bestHits);
+        return new PlayerBarGrid((int)Math.Round(barY), pitch, barWidth, bestLeft.Grid, bestRight.Grid, bestHits);
+    }
+
+    /// <summary>Центр полосы строк с почти максимальным числом цветных пикселей в диапазоне [from, to).</summary>
+    private static (double Y, int Max) BandCenter(int[] counts, int from, int to)
+    {
+        int max = 0;
+        for (int y = from; y < to; y++) max = Math.Max(max, counts[y]);
+        if (max == 0) return (from, 0);
+        // Только непрерывный участок вокруг максимума.
+        int peak = Enumerable.Range(from, to - from).First(y => counts[y] == max);
+        int lo = peak, hi = peak;
+        while (lo - 1 >= from && counts[lo - 1] >= 0.8 * max) lo--;
+        while (hi + 1 < to && counts[hi + 1] >= 0.8 * max) hi++;
+        return ((lo + hi) / 2.0, max);
+    }
+
+    private static List<(double Center, int Width)> Segments(Mat mask, int y, int W)
+    {
+        using var row = mask.Row(Math.Clamp(y, 0, mask.Rows - 1));
+        var result = new List<(double, int)>();
+        for (int x = 0; x < W;)
+        {
+            if (row.At<byte>(0, x) == 0) { x++; continue; }
+            int s = x;
+            while (x < W && row.At<byte>(0, x) != 0) x++;
+            if (x - s >= W * 0.015) result.Add(((s + x) / 2.0, x - s));
+        }
+        return result;
     }
 
     private static List<(int Hits, double[] Grid)> Candidates(List<double> cs, double pitch)

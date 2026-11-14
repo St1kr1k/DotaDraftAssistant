@@ -88,7 +88,8 @@ public partial class App : System.Windows.Application
         // --- Infrastructure: «глаза» ---
         _capture = new GdiScreenCaptureService();
         _layout = new JsonLayoutStore(userDir, dataDir);
-        _templates = HeroTemplateLibrary.LoadFromDirectory(DataFiles.HeroesDir(dataDir), heroes.All.Select(h => h.Id));
+        _templates = HeroTemplateLibrary.LoadFromDirectory(DataFiles.HeroesDir(dataDir), heroes.All.Select(h => h.Id),
+                                                           _settings.Current.Recognition.PortraitZoom);
         _log.Info($"Templates loaded for {_templates.HeroCount}/{heroes.All.Count} heroes");
 
         Func<RecognitionOptions> rec = () => _settings.Current.Recognition;

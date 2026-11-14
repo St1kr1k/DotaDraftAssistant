@@ -387,7 +387,8 @@ internal static class Program
         var heroes = JsonHeroRepository.Load(dataDir);
         var settings = new JsonSettingsRepository(userDir).LoadSettings();
         var layout = new JsonLayoutStore(userDir, dataDir);
-        var templates = HeroTemplateLibrary.LoadFromDirectory(DataFiles.HeroesDir(dataDir), heroes.All.Select(h => h.Id));
+        var templates = HeroTemplateLibrary.LoadFromDirectory(DataFiles.HeroesDir(dataDir), heroes.All.Select(h => h.Id),
+                                                              new RecognitionOptions().PortraitZoom);
         Func<RecognitionOptions> rec = () => settings.Recognition;
         var recognizer = new CompositeHeroRecognizer(
             new TemplateHeroRecognizer(templates, rec), new ColorHistogramHeroRecognizer(templates, rec), rec);

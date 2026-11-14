@@ -10,7 +10,10 @@ namespace DraftAssistant.Tests;
 public class AutoLayoutTests
 {
     // Пропорции сняты со скриншота драфта: шаг 0.0656·W, ширина полоски 0.057·W, линия на 0.065·H.
-    private static Mat SyntheticTopBar(int width, int height, params int[] missing)
+    private static Mat SyntheticTopBar(int width, int height, params int[] missing) => SyntheticTopBar(width, height, missing, []);
+
+    /// <summary>У выбравших героя полоска не под портретом, а над ним (у края экрана) и сдвинута к центру.</summary>
+    private static Mat SyntheticTopBar(int width, int height, int[] missing, int[] picked)
     {
         var img = new Mat((int)(height * PlayerBarGridDetector.SearchHeight), width, MatType.CV_8UC3, new Scalar(40, 35, 30));
         double pitch = width * 0.0656, barW = width * 0.057, y = height * 0.065;
@@ -24,7 +27,17 @@ public class AutoLayoutTests
         {
             if (missing.Contains(i)) continue;
             double c = (i < 5 ? firstLeft : firstRight) + (i % 5) * pitch;
-            Cv2.Rectangle(img, new Rect((int)(c - barW / 2), (int)y, (int)barW, Math.Max(3, height / 270)), colors[i], -1);
+            int barH = Math.Max(3, height / 270);
+            if (picked.Contains(i))
+            {
+                double top = y + barH / 2.0 - PlayerBarGridDetector.TopToBottomBars * pitch - barH / 2.0;
+                double cx = c + (i < 5 ? -1 : 1) * PlayerBarGrid.Skew * pitch;
+                Cv2.Rectangle(img, new Rect((int)(cx - barW / 2), (int)Math.Max(0, top), (int)barW, barH), colors[i], -1);
+            }
+            else
+            {
+                Cv2.Rectangle(img, new Rect((int)(c - barW / 2), (int)y, (int)barW, barH), colors[i], -1);
+            }
         }
         return img;
     }
@@ -44,6 +57,25 @@ public class AutoLayoutTests
         Assert.InRange(grid.DireCenters[0], w * 0.6126 - 3, w * 0.6126 + 3);
         Assert.All(grid.RadiantCenters, c => Assert.True(c < w / 2.0));
         Assert.All(grid.DireCenters, c => Assert.True(c > w / 2.0));
+    }
+
+    [Theory]
+    [InlineData(1920, 1080, new[] { 0, 1, 5, 9 })]
+    [InlineData(2560, 1440, new[] { 0, 1, 2, 3, 5, 6, 7, 9 })]
+    [InlineData(2560, 1440, new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 })]
+    public void Grid_stays_in_place_as_heroes_get_picked(int w, int h, int[] picked)
+    {
+        using var empty = SyntheticTopBar(w, h);
+        using var during = SyntheticTopBar(w, h, [], picked);
+        var g0 = PlayerBarGridDetector.Detect(empty, w)!;
+        var g1 = PlayerBarGridDetector.Detect(during, w);
+        Assert.NotNull(g1);
+        Assert.InRange(g1!.BarY, g0.BarY - 3, g0.BarY + 3);
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.InRange(g1.RadiantCenters[i], g0.RadiantCenters[i] - 4, g0.RadiantCenters[i] + 4);
+            Assert.InRange(g1.DireCenters[i], g0.DireCenters[i] - 4, g0.DireCenters[i] + 4);
+        }
     }
 
     [Fact]
