@@ -119,7 +119,6 @@ public sealed class MatchupDto
     public double? KillsPerGame { get; set; }
     public double? DeathsPerGame { get; set; }
 }
-}
 
 /// <summary>Игры героя на позиции 1..5 по одному источнику.</summary>
 public sealed class PositionDto
