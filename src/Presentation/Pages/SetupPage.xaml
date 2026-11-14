@@ -23,21 +23,42 @@
                 </StackPanel>
             </Border>
 
+            <!-- Ник / свой слот -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="ВАШ НИК — ЧТОБЫ НАЙТИ ВАШ СЛОТ" Style="{StaticResource Caps}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
+                        <Ellipse x:Name="NickDot" Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center" />
+                        <TextBlock x:Name="NickTitle" Style="{StaticResource H2}" FontSize="20" />
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,10"
+                               Text="По нику приложение находит ваш слот на экране драфта: вашу позицию в рейтинге и момент, когда вы пикнули (окошко подсказок после этого скрывается). Обычно ник берётся из Steam сам; заполните поле, только если в Доте он другой." />
+                    <Border Width="320" HorizontalAlignment="Left" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="6" Background="{StaticResource Panel}" Padding="12,0">
+                        <TextBox x:Name="NicknameBox" Style="{StaticResource SearchBox}" Height="36" LostFocus="OnNicknameChanged"
+                                 AutomationProperties.Name="Ваш ник в Dota" />
+                    </Border>
+                </StackPanel>
+            </Border>
+
             <!-- GSI -->
             <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                 <StackPanel>
-                    <TextBlock Text="СВЯЗЬ С DOTA (GSI)" Style="{StaticResource Caps}" />
+                    <TextBlock Text="СВЯЗЬ С DOTA (GSI) — НЕ ОБЯЗАТЕЛЬНО" Style="{StaticResource Caps}" />
                     <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
                         <Ellipse x:Name="GsiDot" Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center" />
                         <TextBlock x:Name="GsiTitle" Style="{StaticResource H2}" FontSize="20" />
                     </StackPanel>
-                    <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,12"
-                               Text="Официальный канал Valve: Dota сама сообщает приложению, за какую команду вы играете и когда вы выбрали героя — после этого окошко подсказок скрывается." />
-                    <Button x:Name="InstallGsiButton" Content="Настроить в один клик" Style="{StaticResource AccentButton}" HorizontalAlignment="Left" Click="OnInstallGsi" />
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,8"
+                               Text="Официальный канал Valve. Без него всё работает по экрану; с ним приложение ещё надёжнее узнаёт вашу команду и ваш пик (например, если ник не прочитался)." />
+                    <TextBlock x:Name="DotaPathText" Style="{StaticResource MutedText}" Margin="0,0,0,12" />
+                    <WrapPanel>
+                        <Button x:Name="InstallGsiButton" Content="Настроить в один клик" Style="{StaticResource AccentButton}" Margin="0,0,10,0" Click="OnInstallGsi" />
+                        <Button Content="Указать папку Dota вручную" Style="{StaticResource GhostButton}" Click="OnChooseDotaFolder" />
+                    </WrapPanel>
                     <TextBlock x:Name="GsiInstallResult" Style="{StaticResource MutedText}" Margin="0,8,0,0" />
 
                     <Border Height="1" Background="{StaticResource Line}" Margin="0,16" />
-                    <TextBlock Text="Один раз добавьте параметр запуска в Steam:" FontSize="14" Margin="0,0,0,8" />
+                    <TextBlock Text="Для GSI Dota требует один параметр запуска в Steam:" FontSize="14" Margin="0,0,0,8" />
                     <TextBlock Style="{StaticResource MutedText}" Margin="0,0,0,10"
                                Text="Библиотека → правой кнопкой по Dota 2 → Свойства → Общие → Параметры запуска" />
                     <StackPanel Orientation="Horizontal">
@@ -46,21 +67,6 @@
                         </Border>
                         <Button Content="Скопировать" Style="{StaticResource GhostButton}" Click="OnCopyLaunchOption" />
                     </StackPanel>
-                    <TextBlock Style="{StaticResource MutedText}" FontSize="12" Margin="0,8,0,0"
-                               Text="После этого перезапустите Dota. Статус выше станет зелёным, когда Dota начнёт присылать данные (в лобби или матче)." />
-                </StackPanel>
-            </Border>
-
-            <!-- Ник -->
-            <Border Style="{StaticResource Card}" Margin="0,0,0,14">
-                <StackPanel>
-                    <TextBlock Text="ВАШ НИК В DOTA" Style="{StaticResource Caps}" />
-                    <TextBlock Style="{StaticResource MutedText}" Margin="0,6,0,10"
-                               Text="Нужен, только если GSI не настроен: по нику приложение находит ваш слот и вашу позицию в рейтинге." />
-                    <Border Width="320" HorizontalAlignment="Left" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="6" Background="{StaticResource Panel}" Padding="12,0">
-                        <TextBox x:Name="NicknameBox" Style="{StaticResource SearchBox}" Height="36" LostFocus="OnNicknameChanged"
-                                 AutomationProperties.Name="Ваш ник в Dota" />
-                    </Border>
                 </StackPanel>
             </Border>
 

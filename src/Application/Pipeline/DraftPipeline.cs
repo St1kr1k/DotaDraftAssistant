@@ -188,7 +188,7 @@ public sealed class DraftPipeline
             : null;
 
         bool sideChanged = _last?.State.MySide != side;
-        bool ownPickedChanged = _last is not null && _last.OwnHeroPicked != (hint?.OwnHeroId is not null);
+        bool ownPickedChanged = _last is not null && _last.OwnHeroPicked != OwnHeroPicked(state, hint);
         bool changed = slotsChanged || transition is not null || sideChanged || _recommendationsDirty
                        || _last?.Status != status || ownPickedChanged || textChanged;
         if (changed)
@@ -216,6 +216,21 @@ public sealed class DraftPipeline
         // Сохраняем ранее определённую сторону до конца драфта.
         if (_last?.State.MySide is { } prev && _machine.Phase != DraftPhase.Idle) return (prev, _last.SideSource);
         return (null, SideSource.None);
+    }
+
+    /// <summary>
+    /// Вы уже выбрали героя? По GSI (если настроен) или по экрану: в вашем слоте (найден по нику)
+    /// появился подтверждённый герой. Параметр запуска для этого не нужен.
+    /// </summary>
+    private static bool OwnHeroPicked(DraftState state, GameStateHint? hint)
+    {
+        if (hint?.OwnHeroId is not null) return true;
+        if (state.MySide is { } side && state.MySlotIndex is { } slot)
+        {
+            var mine = state.Slots.FirstOrDefault(s => s.Id == new SlotId(side, SlotKind.Pick, slot));
+            return mine is { Status: SlotStatus.Confirmed };
+        }
+        return false;
     }
 
     /// <summary>Добавляет роли, баны, сторону и свой слот, прочитанные с экрана. true — что-то изменилось.</summary>
@@ -280,7 +295,7 @@ public sealed class DraftPipeline
             .Select(_heroes.Find).OfType<Hero>()
             .ToDictionary(h => h.Id, h => _roles.Infer(h));
 
-        bool ownPicked = FreshHint()?.OwnHeroId is not null;
+        bool ownPicked = OwnHeroPicked(state, FreshHint());
         _last = new DraftSnapshot(status, message, state, sideSource, recs, enemyRoles, _patch, screenConfidence, ownPicked,
                                   position, fromDraft);
         SnapshotUpdated?.Invoke(this, _last);

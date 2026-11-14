@@ -47,6 +47,7 @@ public partial class App : System.Windows.Application
     private DispatcherTimer? _positionTimer;
     private DraftSnapshot? _lastSnapshot;
     private bool _userHidden;
+    private string? _steamName;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -90,11 +91,14 @@ public partial class App : System.Windows.Application
         var recognizer = new CompositeHeroRecognizer(
             new TemplateHeroRecognizer(_templates, rec), new ColorHistogramHeroRecognizer(_templates, rec), rec);
         var analyzer = new DraftFrameAnalyzer(_layout, recognizer, new SlotEmptinessClassifier(rec), rec);
+        // Ник из Steam: по нему на экране драфта находится ваш слот (без GSI и параметров запуска).
+        try { _steamName = SteamAccount.CurrentPersonaName(); } catch (Exception) { _steamName = null; }
+        _log.Info($"Steam persona: {_steamName ?? "не найден"}");
         var textReader = new DraftTextReader(heroes, _log);
         var debugDir = Path.Combine(userDir, "debug");
         var detector = new VisualDraftDetector(
             _capture, analyzer, textReader,
-            playerName: () => _gsi?.Current?.PlayerName ?? _profile.Current.Nickname,
+            playerName: () => _gsi?.Current?.PlayerName ?? _profile.Current.Nickname ?? _steamName,
             debugDirectory: debugDir,
             saveDebugFrames: () => _settings.Current.Recognition.SaveDebugFrames);
 
@@ -154,7 +158,7 @@ public partial class App : System.Windows.Application
             new HeroesPage(new HeroesViewModel(heroes, _profile, roles, patch, images)),
             new PositionPage(new PositionViewModel(_profile, heroes, roles)),
             new OverlayPage(overlayVm),
-            new SetupPage(detector, _layout, _gsi, _settings, _profile, debugDir, OpenCalibration));
+            new SetupPage(detector, _layout, _gsi, _settings, _profile, debugDir, OpenCalibration, _steamName));
         _main.Closed += (_, _) => Shutdown();
         _main.RestartToUpdateRequested += (_, _) => _updater.RestartAndApply();
         _main.Show();
@@ -182,7 +186,10 @@ public partial class App : System.Windows.Application
         _ = Task.Run(() => _updater.RunAsync(_cts.Token));
 
         // GSI ещё не настроен — сразу показываем раздел, где это делается в один клик.
-        if (!GsiInstaller.Status().ConfigInstalled) _main.ShowPage("setup");
+        // GSI теперь не обязателен: свой слот находится по нику из Steam. Раздел «Настройка» открываем,
+        // только если ник неизвестен совсем.
+        if (_steamName is null && _profile.Current.Nickname is null && !GsiInstaller.Status(_settings.Current.Gsi.DotaPath).ConfigInstalled)
+            _main.ShowPage("setup");
     }
 
     private void OnSnapshot(DraftSnapshot s)

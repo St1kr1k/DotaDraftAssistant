@@ -1,10 +1,11 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using DraftAssistant.Presentation.Common;
 
 namespace DraftAssistant.Presentation.Pages;
 
-public partial class HeroesPage : UserControl
+public partial class HeroesPage : UserControl, ITypeAnywhere
 {
     public HeroesPage(HeroesViewModel vm)
     {
@@ -13,6 +14,22 @@ public partial class HeroesPage : UserControl
     }
 
     private HeroesViewModel Vm => (HeroesViewModel)DataContext;
+
+    public void TypeText(string text)
+    {
+        Vm.TypeChar(text);
+        // Дальше текст печатается уже в поле поиска.
+        SearchBox.Focus();
+        SearchBox.CaretIndex = SearchBox.Text.Length;
+    }
+
+    public void TypeBackspace() => Vm.Backspace();
+
+    public void TypeEscape()
+    {
+        Vm.ClearSearch();
+        Focus();
+    }
 
     private void OnTileEnter(object sender, MouseEventArgs e)
     {

@@ -25,11 +25,12 @@ public partial class SetupPage : UserControl
     private readonly ProfileStore _profile;
     private readonly string _debugDir;
     private readonly Func<bool> _openCalibration;
+    private readonly string? _steamName;
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(2) };
     private bool _loading;
 
     public SetupPage(VisualDraftDetector detector, JsonLayoutStore layout, IGameStateHintSource? gsi,
-                     SettingsStore settings, ProfileStore profile, string debugDir, Func<bool> openCalibration)
+                     SettingsStore settings, ProfileStore profile, string debugDir, Func<bool> openCalibration, string? steamName)
     {
         InitializeComponent();
         _detector = detector;
@@ -39,6 +40,7 @@ public partial class SetupPage : UserControl
         _profile = profile;
         _debugDir = debugDir;
         _openCalibration = openCalibration;
+        _steamName = steamName;
 
         Loaded += (_, _) =>
         {
@@ -79,8 +81,15 @@ public partial class SetupPage : UserControl
             }
         }
 
+        // Ник
+        var nick = _profile.Current.Nickname;
+        if (nick is not null) { NickDot.Fill = Ok; NickTitle.Text = $"{nick} (указан вручную)"; }
+        else if (_steamName is not null) { NickDot.Fill = Ok; NickTitle.Text = $"{_steamName} (из Steam)"; }
+        else { NickDot.Fill = Warn; NickTitle.Text = "Ник не найден — впишите его ниже"; }
+
         // GSI
-        var status = GsiInstaller.Status();
+        var status = GsiInstaller.Status(_settings.Current.Gsi.DotaPath);
+        DotaPathText.Text = status.DotaPath is { } dp ? $"Папка Dota: {dp}" : "Папка Dota не найдена. Запустите Dota или укажите папку вручную.";
         bool receiving = _gsi?.Current is { } h && DateTimeOffset.UtcNow - h.ReceivedAt < TimeSpan.FromSeconds(60);
         if (receiving)
         {
@@ -95,12 +104,12 @@ public partial class SetupPage : UserControl
         else if (!status.DotaFound)
         {
             GsiDot.Fill = Off;
-            GsiTitle.Text = "Dota 2 не найдена в Steam";
+            GsiTitle.Text = "Не настроено — Dota не найдена";
         }
         else
         {
             GsiDot.Fill = Off;
-            GsiTitle.Text = "Не настроено";
+            GsiTitle.Text = "Не настроено (необязательно)";
         }
         InstallGsiButton.Content = status.ConfigInstalled ? "Переустановить" : "Настроить в один клик";
         InstallGsiButton.IsEnabled = status.DotaFound;
@@ -110,13 +119,29 @@ public partial class SetupPage : UserControl
     {
         try
         {
-            var path = GsiInstaller.Install(_settings.Current.Gsi.Port);
+            var path = GsiInstaller.Install(_settings.Current.Gsi.Port, _settings.Current.Gsi.DotaPath);
             GsiInstallResult.Text = $"Готово: {path}";
         }
         catch (Exception ex)
         {
             GsiInstallResult.Text = $"Не получилось: {ex.Message}";
         }
+        Refresh();
+    }
+
+    private void OnChooseDotaFolder(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Папка Dota 2 (например, G:\\SteamLibrary\\steamapps\\common\\dota 2 beta)" };
+        if (dlg.ShowDialog(Window.GetWindow(this)) != true) return;
+        var dir = GsiInstaller.NormalizeManualDir(dlg.FolderName);
+        if (dir is null)
+        {
+            GsiInstallResult.Text = "В этой папке не найдена Dota 2. Выберите папку «dota 2 beta».";
+            return;
+        }
+        _settings.Current.Gsi.DotaPath = dir;
+        _settings.Save();
+        GsiInstallResult.Text = $"Папка Dota: {dir}";
         Refresh();
     }
 

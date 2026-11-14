@@ -1,4 +1,5 @@
 using System.Windows.Input;
+using System.Windows.Media;
 using DraftAssistant.Application.Configuration;
 using DraftAssistant.Presentation.Common;
 using DraftAssistant.Presentation.Components;
@@ -55,6 +56,17 @@ public sealed class OverlaySettingsViewModel : ObservableObject
 
     public string OpacityText => $"{O.Opacity:P0}";
 
+    /// <summary>Фон окошка в превью — тот же, что в игре: меняется вместе с ползунком.</summary>
+    public Brush PreviewBackground
+    {
+        get
+        {
+            var b = new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(O.Opacity, 0.4, 1) * 255), 9, 9, 11));
+            b.Freeze();
+            return b;
+        }
+    }
+
     public bool ShowReasons
     {
         get => O.ShowReasons;
@@ -90,7 +102,7 @@ public sealed class OverlaySettingsViewModel : ObservableObject
     private void RaiseAll()
     {
         foreach (var n in new[] { nameof(UntilMyPick), nameof(WholeDraft), nameof(SizeS), nameof(SizeM), nameof(SizeL),
-                                  nameof(Opacity), nameof(OpacityText), nameof(ShowReasons),
+                                  nameof(Opacity), nameof(OpacityText), nameof(ShowReasons), nameof(PreviewBackground),
                                   nameof(PreviewWidth), nameof(PreviewHeight), nameof(PreviewLeft), nameof(PreviewTop) })
             Raise(n);
     }

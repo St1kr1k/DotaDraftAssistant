@@ -135,4 +135,6 @@ public sealed class GsiOptions
     public int Port { get; set; } = 53000;
     /// <summary>Через сколько секунд без сообщений подсказка GSI считается устаревшей.</summary>
     public int StaleAfterSeconds { get; set; } = 30;
+    /// <summary>Папка Dota, выбранная вручную (если автоматически нашлась не та).</summary>
+    public string? DotaPath { get; set; }
 }

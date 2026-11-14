@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
@@ -9,8 +10,11 @@ public sealed record GsiInstallStatus(bool DotaFound, bool ConfigInstalled, stri
 /// Установка конфига Game State Integration в один клик.
 /// Это штатный механизм Valve: файл в папке cfg/gamestate_integration, который Dota читает при запуске
 /// и по которому сама отправляет данные на localhost. Клиент игры не изменяется.
-/// Параметр запуска -gamestateintegration пользователь добавляет в Steam сам — приложение
-/// не правит настройки Steam.
+///
+/// Папка Dota ищется так (первое найденное):
+///   1. путь, выбранный пользователем вручную;
+///   2. запущенный процесс dota2.exe (точнее всего — это именно та Dota, в которую играют);
+///   3. библиотека Steam, где есть appmanifest_570.acf (Dota 2) и game\bin\win64\dota2.exe.
 /// </summary>
 public static partial class GsiInstaller
 {
@@ -35,37 +39,105 @@ public static partial class GsiInstaller
         }
         """;
 
-    public static GsiInstallStatus Status()
+    public static GsiInstallStatus Status(string? manualDotaDir = null)
     {
-        var dota = FindDotaGameDir();
+        var dota = FindDotaGameDir(manualDotaDir);
         if (dota is null) return new GsiInstallStatus(false, false, null, null);
         var cfg = Path.Combine(dota, "cfg", "gamestate_integration", FileName);
         return new GsiInstallStatus(true, File.Exists(cfg), dota, cfg);
     }
 
-    /// <summary>Кладёт конфиг в папку Dota. Возвращает путь к файлу.</summary>
-    public static string Install(int port)
+    /// <summary>Кладёт конфиг в папку Dota и убирает наш файл из других (ошибочно найденных) копий. Возвращает путь.</summary>
+    public static string Install(int port, string? manualDotaDir = null)
     {
-        var dota = FindDotaGameDir() ?? throw new DirectoryNotFoundException("Папка Dota 2 не найдена в библиотеках Steam.");
+        var dota = FindDotaGameDir(manualDotaDir)
+                   ?? throw new DirectoryNotFoundException("Папка Dota 2 не найдена. Запустите Dota или укажите папку вручную.");
         var dir = Path.Combine(dota, "cfg", "gamestate_integration");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, FileName);
         File.WriteAllText(path, ConfigText(port));
+
+        foreach (var other in CandidateGameDirs().Where(d => !SamePath(d, dota)))
+        {
+            var stray = Path.Combine(other, "cfg", "gamestate_integration", FileName);
+            try { if (File.Exists(stray)) File.Delete(stray); } catch (Exception) { }
+        }
         return path;
     }
 
-    /// <summary>…\steamapps\common\dota 2 beta\game\dota во всех библиотеках Steam.</summary>
-    public static string? FindDotaGameDir()
+    /// <summary>
+    /// Пользователь может указать любую папку внутри Dota (корень «dota 2 beta», game, game\dota) —
+    /// приводим к …\game\dota.
+    /// </summary>
+    public static string? NormalizeManualDir(string? chosen)
     {
-        foreach (var library in SteamLibraries())
+        if (string.IsNullOrWhiteSpace(chosen) || !Directory.Exists(chosen)) return null;
+        foreach (var candidate in new[]
+                 {
+                     chosen,
+                     Path.Combine(chosen, "dota"),
+                     Path.Combine(chosen, "game", "dota"),
+                     Path.Combine(chosen, "dota 2 beta", "game", "dota"),
+                     Path.Combine(chosen, "steamapps", "common", "dota 2 beta", "game", "dota"),
+                 })
         {
-            var dir = Path.Combine(library, "steamapps", "common", "dota 2 beta", "game", "dota");
-            if (Directory.Exists(dir)) return dir;
+            if (IsDotaGameDir(candidate)) return Path.GetFullPath(candidate);
         }
         return null;
     }
 
-    private static IEnumerable<string> SteamLibraries()
+    public static string? FindDotaGameDir(string? manualDotaDir = null)
+    {
+        if (NormalizeManualDir(manualDotaDir) is { } manual) return manual;
+        if (FromRunningProcess() is { } running) return running;
+        return CandidateGameDirs().FirstOrDefault();
+    }
+
+    private static bool IsDotaGameDir(string dir) =>
+        Directory.Exists(Path.Combine(dir, "cfg")) &&
+        File.Exists(Path.Combine(dir, "..", "bin", "win64", "dota2.exe"));
+
+    private static string? FromRunningProcess()
+    {
+        foreach (var p in Process.GetProcessesByName("dota2"))
+        {
+            try
+            {
+                var exe = p.MainModule?.FileName;
+                if (exe is null) continue;
+                // …\dota 2 beta\game\bin\win64\dota2.exe → …\dota 2 beta\game\dota
+                var dir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(exe)!, "..", "..", "dota"));
+                if (IsDotaGameDir(dir)) return dir;
+            }
+            catch (Exception)
+            {
+                // нет доступа к процессу — пробуем другие способы
+            }
+            finally
+            {
+                p.Dispose();
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Папки …\game\dota во всех библиотеках Steam, сначала те, где Dota реально установлена.</summary>
+    private static IEnumerable<string> CandidateGameDirs()
+    {
+        var withManifest = new List<string>();
+        var others = new List<string>();
+        foreach (var library in SteamLibraries())
+        {
+            var dir = Path.Combine(library, "steamapps", "common", "dota 2 beta", "game", "dota");
+            if (!IsDotaGameDir(dir)) continue;
+            if (File.Exists(Path.Combine(library, "steamapps", "appmanifest_570.acf"))) withManifest.Add(dir);
+            else others.Add(dir);
+        }
+        return withManifest.Concat(others);
+    }
+
+    /// <summary>Каталоги установки Steam (из реестра).</summary>
+    public static IEnumerable<string> SteamRoots()
     {
         var roots = new List<string>();
         foreach (var (hive, key, value) in new[]
@@ -82,10 +154,13 @@ public static partial class GsiInstaller
             }
             catch (Exception) { }
         }
-        roots.Add(@"C:\Program Files (x86)\Steam");
+        return roots.Distinct(StringComparer.OrdinalIgnoreCase);
+    }
 
+    private static IEnumerable<string> SteamLibraries()
+    {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var root in roots)
+        foreach (var root in SteamRoots())
         {
             if (seen.Add(root)) yield return root;
             var vdf = Path.Combine(root, "steamapps", "libraryfolders.vdf");
@@ -95,10 +170,13 @@ public static partial class GsiInstaller
             foreach (Match m in PathRegex().Matches(text))
             {
                 var lib = m.Groups[1].Value.Replace(@"\\", @"\");
-                if (seen.Add(lib)) yield return lib;
+                if (Directory.Exists(lib) && seen.Add(lib)) yield return lib;
             }
         }
     }
+
+    private static bool SamePath(string a, string b) =>
+        string.Equals(Path.GetFullPath(a).TrimEnd('\\'), Path.GetFullPath(b).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
 
     [GeneratedRegex("\"path\"\\s+\"([^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex PathRegex();

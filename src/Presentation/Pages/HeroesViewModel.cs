@@ -15,6 +15,13 @@ namespace DraftAssistant.Presentation.Pages;
 public sealed class HeroTile : ObservableObject
 {
     private HeroPreference _mark;
+    private bool _isDimmed, _isHighlighted;
+
+    /// <summary>Не подходит под поиск/фильтр — показывается серым (как в Доте), но не исчезает.</summary>
+    public bool IsDimmed { get => _isDimmed; set => Set(ref _isDimmed, value); }
+
+    /// <summary>Подходит под набранный текст — подсвечивается и мерцает.</summary>
+    public bool IsHighlighted { get => _isHighlighted; set => Set(ref _isHighlighted, value); }
 
     public required Hero Hero { get; init; }
     public required ImageSource? Portrait { get; init; }
@@ -77,7 +84,7 @@ public sealed class HeroesViewModel : ObservableObject
         _tiles = heroes.All.Select(h => new HeroTile
         {
             Hero = h,
-            Portrait = images.Portrait(h.Id, 200),
+            Portrait = images.Tile(h.Id, TileAspect),
             Mark = profile.Current.GetPreference(h.Id),
             SetMain = new RelayCommand(_ => Toggle(h.Id, HeroPreference.Main)),
             SetLike = new RelayCommand(_ => Toggle(h.Id, HeroPreference.Comfort)),
@@ -104,6 +111,9 @@ public sealed class HeroesViewModel : ObservableObject
         Hovered = _tiles.FirstOrDefault(t => t.IsMain) ?? _tiles.FirstOrDefault();
         profile.Changed += (_, _) => Sync();
     }
+
+    /// <summary>Пропорции плитки героя (ширина / высота).</summary>
+    public const double TileAspect = 4.0 / 3.0;
 
     public IReadOnlyList<AttributeGroup> Groups { get; }
     public IReadOnlyList<RoleFilter> RoleFilters { get; }
@@ -170,25 +180,42 @@ public sealed class HeroesViewModel : ObservableObject
     {
         var items = new ObservableCollection<HeroTile>(_tiles.Where(t => t.Hero.PrimaryAttribute == attr));
         var view = CollectionViewSource.GetDefaultView(items);
-        view.Filter = o => o is HeroTile t && Matches(t);
         var brush = (SolidColorBrush)new BrushConverter().ConvertFromString(color)!;
         brush.Freeze();
         return new AttributeGroup { Title = title, Dot = brush, Heroes = view };
     }
 
-    private bool Matches(HeroTile t)
-    {
-        if (_role.Tag is { } tag && !t.Hero.HasRole(tag)) return false;
-        var q = _search.Trim();
-        return q.Length == 0
-               || t.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
-               || t.Hero.Aliases.Any(a => a.Contains(q, StringComparison.OrdinalIgnoreCase));
-    }
+    private bool MatchesSearch(HeroTile t, string q) =>
+        t.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+        t.Name.Replace(" ", "").Contains(q.Replace(" ", ""), StringComparison.OrdinalIgnoreCase) ||
+        t.Hero.Aliases.Any(a => a.Contains(q, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>Как в Доте: подходящие герои ярче и мерцают, остальные серые. Никто не исчезает.</summary>
     private void Refresh()
     {
-        foreach (var g in Groups) g.Heroes.Refresh();
+        var q = _search.Trim();
+        foreach (var t in _tiles)
+        {
+            bool roleOk = _role.Tag is not { } tag || t.Hero.HasRole(tag);
+            bool searchOk = q.Length == 0 || MatchesSearch(t, q);
+            t.IsDimmed = !(roleOk && searchOk);
+            t.IsHighlighted = q.Length > 0 && roleOk && searchOk;
+        }
     }
+
+    /// <summary>Ввод с клавиатуры в любом месте страницы, как в Доте.</summary>
+    public void TypeChar(string text)
+    {
+        if (string.IsNullOrEmpty(text) || char.IsControl(text[0])) return;
+        Search += text;
+    }
+
+    public void Backspace()
+    {
+        if (_search.Length > 0) Search = _search[..^1];
+    }
+
+    public void ClearSearch() => Search = "";
 
     private void Toggle(int heroId, HeroPreference mark)
     {

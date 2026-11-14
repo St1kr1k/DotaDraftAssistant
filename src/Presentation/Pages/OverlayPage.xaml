@@ -19,6 +19,15 @@
                     <Border BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="10" Background="#101318" ClipToBounds="True">
                         <Viewbox Stretch="Uniform">
                             <Canvas Width="1920" Height="1080">
+                                <!-- Условный «фон игры» в полоску: сквозь окошко видно, насколько оно прозрачное -->
+                                <Canvas.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="48,48" MappingMode="Absolute" SpreadMethod="Repeat">
+                                        <GradientStop Color="#2B3543" Offset="0" />
+                                        <GradientStop Color="#2B3543" Offset="0.5" />
+                                        <GradientStop Color="#141920" Offset="0.5" />
+                                        <GradientStop Color="#141920" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Canvas.Background>
                                 <Border Canvas.Left="520" Canvas.Top="0" Width="880" Height="104" BorderBrush="#2A323D" BorderThickness="2">
                                     <TextBlock Text="Верхняя панель Dota" Foreground="#4A5562" FontSize="26" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
@@ -26,7 +35,7 @@
                                     <TextBlock Text="Сетка героев" Foreground="#4A5562" FontSize="26" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </Border>
                                 <Border Canvas.Left="{Binding PreviewLeft}" Canvas.Top="{Binding PreviewTop}" Width="{Binding PreviewWidth}" Height="{Binding PreviewHeight}"
-                                        BorderBrush="{StaticResource Accent}" BorderThickness="3" CornerRadius="10" Background="#F009090B">
+                                        BorderBrush="{StaticResource Accent}" BorderThickness="3" CornerRadius="10" Background="{Binding PreviewBackground}">
                                     <StackPanel Margin="20">
                                         <TextBlock Text="ТОП-3 · POS" FontFamily="{StaticResource HeadFont}" FontSize="22" FontWeight="Bold" Foreground="{StaticResource Text}" Margin="0,0,0,16" />
                                         <Border Height="52" Background="#1A1A1F" CornerRadius="4" Margin="0,0,0,12" />

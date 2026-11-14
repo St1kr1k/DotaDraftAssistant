@@ -1,4 +1,7 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using DraftAssistant.Presentation.Common;
 
 namespace DraftAssistant.Presentation.Main;
 
@@ -23,6 +26,28 @@ public partial class MainWindow : Window
     }
 
     public event EventHandler? RestartToUpdateRequested;
+
+    /// <summary>Печать в любом месте окна уходит в поиск текущего раздела (если он это поддерживает).</summary>
+    protected override void OnPreviewTextInput(TextCompositionEventArgs e)
+    {
+        if (PageHost.Content is ITypeAnywhere page && Keyboard.FocusedElement is not TextBox && !string.IsNullOrEmpty(e.Text))
+        {
+            page.TypeText(e.Text);
+            e.Handled = true;
+            return;
+        }
+        base.OnPreviewTextInput(e);
+    }
+
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        if (PageHost.Content is ITypeAnywhere page)
+        {
+            if (e.Key == Key.Escape) { page.TypeEscape(); e.Handled = true; return; }
+            if (e.Key == Key.Back && Keyboard.FocusedElement is not TextBox) { page.TypeBackspace(); e.Handled = true; return; }
+        }
+        base.OnPreviewKeyDown(e);
+    }
 
     public void ShowPage(string name)
     {

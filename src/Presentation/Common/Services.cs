@@ -4,6 +4,7 @@ using System.Windows.Media.Imaging;
 using DraftAssistant.Application.Abstractions;
 using DraftAssistant.Application.Configuration;
 using DraftAssistant.Domain.Player;
+using DraftAssistant.Infrastructure.Vision;
 
 namespace DraftAssistant.Presentation.Common;
 
@@ -45,6 +46,41 @@ public sealed class HeroImages(string heroesDirectory)
 {
     private readonly Dictionary<(int, int), ImageSource?> _cache = new();
 
+    private readonly Dictionary<(int, int), ImageSource?> _tiles = new();
+
+    /// <summary>
+    /// Портрет, обрезанный под плитку с соотношением <paramref name="aspect"/> так, чтобы герой
+    /// (лицо, а не фон или плечо) был в центре.
+    /// </summary>
+    public ImageSource? Tile(int heroId, double aspect)
+    {
+        var key = (heroId, (int)Math.Round(aspect * 100));
+        if (_tiles.TryGetValue(key, out var cached)) return cached;
+
+        ImageSource? result = null;
+        var path = Path.Combine(heroesDirectory, heroId.ToString(), "portrait.png");
+        if (Portrait(heroId, 0) is BitmapSource full)
+        {
+            try
+            {
+                int w = full.PixelWidth, h = full.PixelHeight;
+                int window = Math.Min(w, (int)Math.Round(h * aspect));
+                double center = PortraitFocus.FindCenterX(path, aspect);
+                int x = Math.Clamp((int)Math.Round(center * w - window / 2.0), 0, w - window);
+                var crop = new CroppedBitmap(full, new System.Windows.Int32Rect(x, 0, window, h));
+                crop.Freeze();
+                result = crop;
+            }
+            catch (Exception)
+            {
+                result = full;
+            }
+        }
+        _tiles[key] = result;
+        return result;
+    }
+
+    /// <param name="decodeWidth">Ширина декодирования; 0 — исходный размер.</param>
     public ImageSource? Portrait(int heroId, int decodeWidth = 256)
     {
         var key = (heroId, decodeWidth);
@@ -60,7 +96,7 @@ public sealed class HeroImages(string heroesDirectory)
                 bmp.BeginInit();
                 bmp.UriSource = new Uri(path, UriKind.Absolute);
                 bmp.CacheOption = BitmapCacheOption.OnLoad;
-                bmp.DecodePixelWidth = decodeWidth;
+                if (decodeWidth > 0) bmp.DecodePixelWidth = decodeWidth;
                 bmp.EndInit();
                 bmp.Freeze();
                 image = bmp;
