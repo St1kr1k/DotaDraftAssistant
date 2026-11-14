@@ -65,6 +65,7 @@ jobs:
           --packDir publish
           --mainExe DotaDraftAssistant.exe
           --packTitle "Dota Draft Assistant"
+          --icon src/Presentation/Assets/app.ico
 
       - name: Публикация в GitHub Releases
         run: >
