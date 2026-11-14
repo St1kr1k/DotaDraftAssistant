@@ -156,7 +156,8 @@ internal static class StratzFetcher
         }
 
         // Для пар симметрия другая: A с B и B с A — одни и те же игры, винрейты должны совпадать.
-        var pairWr = pairs.ToDictionary(p => (p.HeroId, p.AllyId), p => (double)p.Wins / p.Games);
+        // Только пары с большой выборкой: на низких рангах у редких пар разброс случайный, а не ошибка данных.
+        var pairWr = pairs.Where(p => p.Games >= 500).ToDictionary(p => (p.HeroId, p.AllyId), p => (double)p.Wins / p.Games);
         var pairDiffs = pairWr.Where(kv => pairWr.ContainsKey((kv.Key.AllyId, kv.Key.HeroId)))
             .Select(kv => Math.Abs(kv.Value - pairWr[(kv.Key.AllyId, kv.Key.HeroId)])).ToList();
         double pDiff = pairDiffs.Count > 0 ? pairDiffs.Average() : 1;
