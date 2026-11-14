@@ -50,7 +50,7 @@ jobs:
           path: |
             data/heroes
             data/patch
-          key: dota-data-v2-${{ steps.week.outputs.key }}
+          key: dota-data-v3-${{ steps.week.outputs.key }}
           restore-keys: dota-data-
 
       - name: Данные героев и патча (OpenDota / Steam CDN)
@@ -73,7 +73,7 @@ jobs:
           path: |
             data/heroes
             data/patch
-          key: dota-data-v2-${{ steps.week.outputs.key }}
+          key: dota-data-v3-${{ steps.week.outputs.key }}
 
       # STRATZ: точные позиции, связки, исходы линий — только если в репозитории есть секрет STRATZ_TOKEN.
       # Все запросы идут из одной сборки: STRATZ пускает токен максимум с 2 IP за 15 минут.
@@ -82,8 +82,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/patch/stratz_*.json
-          key: stratz-v4-${{ steps.week.outputs.key }}
-          restore-keys: stratz-v4-
+          key: stratz-v5-${{ steps.week.outputs.key }}
+          restore-keys: stratz-v5-
 
       - name: Данные STRATZ
         id: stratz
@@ -98,7 +98,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: data/patch/stratz_*.json
-          key: stratz-v4-${{ steps.week.outputs.key }}
+          key: stratz-v5-${{ steps.week.outputs.key }}
 
       - name: Публикация приложения
         run: >

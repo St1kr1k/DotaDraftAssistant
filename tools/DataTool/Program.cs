@@ -128,6 +128,10 @@ internal static class Program
         }
         heroes = heroes.OrderBy(h => h.Id).ToList();
         await File.WriteAllTextAsync(DataFiles.HeroesJson(dataDir), JsonSerializer.Serialize(heroes, DataFiles.Json));
+
+        // Предметы и способности (dotaconstants через OpenDota) — для плана на игру после пика.
+        try { await FetchConstants(http, Q, heroes, DataFiles.PatchDir(dataDir)); }
+        catch (Exception ex) { Console.Error.WriteLine($"Предметы/способности не получены: {ex.Message}"); }
         Console.WriteLine($"  {heroes.Count} героев");
 
         Console.WriteLine("Патч и статистика…");
@@ -282,6 +286,60 @@ internal static class Program
             await Task.Delay(wait);
         }
     }
+
+    private static async Task FetchConstants(HttpClient http, Func<string, string> q, List<HeroDto> heroes, string patchDir)
+    {
+        Directory.CreateDirectory(patchDir);
+        Console.WriteLine("Предметы и способности…");
+
+        var itemsJson = await GetJson<JsonObject>(http, q($"{OpenDota}/constants/items")) ?? [];
+        var items = new List<ItemDto>();
+        foreach (var (key, node) in itemsJson)
+        {
+            if (node is not JsonObject it || it["id"] is null) continue;
+            items.Add(new ItemDto { Id = Num(it["id"]), Key = key, Name = Str(it["dname"]) ?? key });
+        }
+        await File.WriteAllTextAsync(Path.Combine(patchDir, "items.json"), JsonSerializer.Serialize(items.OrderBy(i => i.Id), DataFiles.Json));
+
+        var abilitiesJson = await GetJson<JsonObject>(http, q($"{OpenDota}/constants/abilities")) ?? [];
+        var heroAbilitiesJson = await GetJson<JsonObject>(http, q($"{OpenDota}/constants/hero_abilities")) ?? [];
+        var result = new List<HeroAbilitiesDto>();
+        foreach (var hero in heroes)
+        {
+            if (heroAbilitiesJson[hero.Name]?["abilities"] is not JsonArray keys) continue;
+            var list = new List<AbilityDto>();
+            foreach (var key in keys.Select(k => Str(k)).OfType<string>())
+            {
+                if (key.StartsWith("generic_") || abilitiesJson[key] is not JsonObject a) continue;
+                var name = Str(a["dname"]);
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var desc = Str(a["desc"]) ?? "";
+                list.Add(new AbilityDto
+                {
+                    Key = key,
+                    Name = name,
+                    DamageType = Str(a["dmg_type"]) ?? "",
+                    PiercesBkb = string.Equals(Str(a["bkbpierce"]), "Yes", StringComparison.OrdinalIgnoreCase),
+                    Dispellable = Str(a["dispellable"]) ?? "",
+                    Invisibility = desc.Contains("invisib", StringComparison.OrdinalIgnoreCase)
+                                   && !desc.Contains("reveal", StringComparison.OrdinalIgnoreCase)
+                                   && !desc.Contains("detect", StringComparison.OrdinalIgnoreCase),
+                });
+            }
+            result.Add(new HeroAbilitiesDto { HeroId = hero.Id, Abilities = list });
+        }
+        await File.WriteAllTextAsync(Path.Combine(patchDir, "abilities.json"), JsonSerializer.Serialize(result, DataFiles.Json));
+        Console.WriteLine($"  предметов {items.Count}, героев со способностями {result.Count}");
+    }
+
+    /// <summary>Строка из JSON (dotaconstants иногда хранит поля массивом — берём первый элемент).</summary>
+    private static string? Str(JsonNode? n) => n switch
+    {
+        JsonValue v when v.TryGetValue<string>(out var s) => s,
+        JsonValue v => v.ToString(),
+        JsonArray arr => arr.Select(Str).FirstOrDefault(s => !string.IsNullOrEmpty(s)),
+        _ => null,
+    };
 
     /// <summary>Число из JSON, где OpenDota иногда отдаёт числа строками.</summary>
     private static int Num(JsonNode? n)

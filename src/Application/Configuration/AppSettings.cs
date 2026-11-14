@@ -167,6 +167,10 @@ public sealed class OverlayOptions
     public PopupShowMode ShowMode { get; set; } = PopupShowMode.UntilMyPick;
     public PopupSize Size { get; set; } = PopupSize.Medium;
     public bool ShowReasons { get; set; } = true;
+    /// <summary>После вашего пика показывать план на игру (стартовые предметы, опасные враги, лёгкие цели).</summary>
+    public bool ShowPlan { get; set; } = true;
+    /// <summary>Сколько секунд план остаётся на экране после конца драфта (Ctrl+Shift+O — скрыть раньше).</summary>
+    public int PlanLingerSeconds { get; set; } = 90;
 }
 
 public sealed class GsiOptions

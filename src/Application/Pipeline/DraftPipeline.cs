@@ -2,6 +2,7 @@ using DraftAssistant.Application.Abstractions;
 using DraftAssistant.Application.Configuration;
 using DraftAssistant.Application.Draft;
 using DraftAssistant.Application.Recommendation;
+using DraftAssistant.Application.Plan;
 using DraftAssistant.Domain.Draft;
 using DraftAssistant.Domain.Heroes;
 using DraftAssistant.Domain.Patch;
@@ -36,7 +37,11 @@ public sealed record DraftSnapshot(
     /// <summary>Позиция, под которую считаются рекомендации.</summary>
     Position EffectivePosition,
     /// <summary>true — позиция прочитана с экрана драфта (рейтинг), false — взята из профиля.</summary>
-    bool PositionFromDraft);
+    bool PositionFromDraft)
+{
+    /// <summary>План на игру после вашего пика (null — герой ещё не выбран или не определён).</summary>
+    public GamePlan? Plan { get; init; }
+}
 
 /// <summary>
 /// Склеивает слои: детектор → трекер → машина состояний → рекомендации → событие для UI.
@@ -50,6 +55,9 @@ public sealed class DraftPipeline
     private readonly IRoleInferenceService _roles;
     private readonly IHeroRepository _heroes;
     private readonly IPatchDataProvider _patchProvider;
+    private readonly GamePlanService? _plans;
+    private GamePlan? _plan;
+    private string _planKey = "";
     private readonly Func<PlayerProfile> _profile;
     private readonly AppSettings _settings;
     private readonly IAppLog _log;
@@ -79,8 +87,10 @@ public sealed class DraftPipeline
         IPatchDataProvider patchProvider,
         Func<PlayerProfile> profile,
         AppSettings settings,
-        IAppLog log)
+        IAppLog log,
+        GamePlanService? plans = null)
     {
+        _plans = plans;
         _detector = detector;
         _hints = hints;
         _recommendations = recommendations;
@@ -306,9 +316,37 @@ public sealed class DraftPipeline
             .ToDictionary(h => h.Id, h => _roles.Infer(h));
 
         bool ownPicked = OwnHeroPicked(state, FreshHint());
+        var plan = ownPicked ? BuildPlan(state, position, profile) : null;
         _last = new DraftSnapshot(status, message, state, sideSource, recs, enemyRoles, _patch, screenConfidence, ownPicked,
-                                  position, fromDraft);
+                                  position, fromDraft) { Plan = plan };
         SnapshotUpdated?.Invoke(this, _last);
+    }
+
+    /// <summary>План пересчитывается, только когда меняются ваш герой, позиция, ранг или враги.</summary>
+    private GamePlan? BuildPlan(DraftState state, Position position, PlayerProfile profile)
+    {
+        if (_plans is null) return null;
+        int? myHeroId = FreshHint()?.OwnHeroId;
+        if (myHeroId is null && state.MySide is { } side && state.MySlotIndex is { } slot)
+            myHeroId = state.Slots.FirstOrDefault(s => s.Id == new SlotId(side, SlotKind.Pick, slot) && s.Status == SlotStatus.Confirmed)?.HeroId;
+        if (myHeroId is null || _heroes.Find(myHeroId.Value) is not { } me) return null;
+
+        var enemies = state.EnemyPicks.Select(_heroes.Find).OfType<Hero>().ToList();
+        string key = $"{me.Id}|{position}|{profile.Rank}|{string.Join(",", enemies.Select(e => e.Id).Order())}|{_patch.GetHashCode()}";
+        if (key != _planKey)
+        {
+            try
+            {
+                _plan = _plans.Build(me, position, enemies, _patch, profile.Rank);
+                _planKey = key;
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Не удалось построить план на игру", ex);
+                _plan = null;
+            }
+        }
+        return _plan;
     }
 
     private static bool SameDraft(DraftState a, DraftState b) =>

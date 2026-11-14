@@ -40,6 +40,40 @@ public sealed class PatchMetaDto
     public string PairSource { get; set; } = "";
 }
 
+public sealed class ItemDto
+{
+    public int Id { get; set; }
+    public string Key { get; set; } = "";
+    public string Name { get; set; } = "";
+}
+
+public sealed class AbilityDto
+{
+    public string Key { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string DamageType { get; set; } = "";
+    public bool PiercesBkb { get; set; }
+    public string Dispellable { get; set; } = "";
+    public bool Invisibility { get; set; }
+}
+
+public sealed class HeroAbilitiesDto
+{
+    public int HeroId { get; set; }
+    public List<AbilityDto> Abilities { get; set; } = [];
+}
+
+/// <summary>Стартовая закупка: сколько игр (Games) из игр героя на позиции (PositionGames) брали Instance-й экземпляр предмета.</summary>
+public sealed class StartItemDto
+{
+    public int HeroId { get; set; }
+    public int Position { get; set; }
+    public int ItemId { get; set; }
+    public int Instance { get; set; }
+    public int Games { get; set; }
+    public int PositionGames { get; set; }
+}
+
 public sealed class LaneDto
 {
     public int HeroId { get; set; }
@@ -81,6 +115,10 @@ public sealed class MatchupDto
     public int Wins { get; set; }
     /// <summary>Источник: "opendota", "stratz", … (пусто — opendota, старый формат).</summary>
     public string? Source { get; set; }
+    /// <summary>Среднее за игру у HeroId в играх против VsHeroId (STRATZ), если известно.</summary>
+    public double? KillsPerGame { get; set; }
+    public double? DeathsPerGame { get; set; }
+}
 }
 
 /// <summary>Игры героя на позиции 1..5 по одному источнику.</summary>

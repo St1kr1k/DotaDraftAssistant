@@ -79,6 +79,9 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             var positions = ReadAll<PositionDto>(dir, "positions.json", S("positions"));
             var pairs = ReadAll<PairDto>(dir, "pairs.json", S("pairs"));
             var lanes = ReadAll<LaneDto>(dir, S("lanes"));
+            var startItems = ReadAll<StartItemDto>(dir, S("startitems"));
+            var itemNames = ReadAll<ItemDto>(dir, "items.json").GroupBy(i => i.Id).ToDictionary(g => g.Key, g => g.First().Name);
+            var abilities = ReadAll<HeroAbilitiesDto>(dir, "abilities.json");
             // Строки без источника — из старых файлов OpenDota.
             foreach (var m in matchups.Where(m => string.IsNullOrEmpty(m.Source))) m.Source = "opendota";
 
@@ -92,6 +95,18 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
                 PositionSource = Join(meta.PositionSource, stratz.PositionSource),
                 PairSource = Join(meta.PairSource, stratz.PairSource),
                 LaneSource = Join("", stratz.LaneSource),
+                Kda = matchups.Where(m => m.KillsPerGame is not null && m.DeathsPerGame is not null && m.Games > 0)
+                    .GroupBy(m => (m.HeroId, m.VsHeroId))
+                    .ToDictionary(g => g.Key, g =>
+                    {
+                        var m = g.MaxBy(x => x.Games)!;
+                        return new KdaStats(m.HeroId, m.VsHeroId, m.Games, m.KillsPerGame!.Value, m.DeathsPerGame!.Value);
+                    }),
+                StartItems = BuildStartItems(startItems, itemNames),
+                Abilities = abilities.ToDictionary(
+                    h => h.HeroId,
+                    h => (IReadOnlyList<AbilityInfo>)h.Abilities
+                        .Select(a => new AbilityInfo(a.Key, a.Name, a.DamageType, a.PiercesBkb, a.Dispellable, a.Invisibility)).ToList()),
                 Lanes = lanes.GroupBy(l => (l.HeroId, l.VsHeroId)).ToDictionary(g => g.Key, g =>
                 {
                     var l = g.First();
@@ -176,6 +191,41 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
         double agreement = 1 - Math.Clamp(spread / 0.05, 0, 1) * 0.6;
         int games = list.Max(r => r.Games);
         return (games, (int)Math.Round(wr * games), agreement);
+    }
+
+    /// <summary>
+    /// Стартовая закупка: предмет попадает в список, если его берут хотя бы в 40% игр героя на позиции;
+    /// количество — сколько экземпляров берут в 40%+ игр.
+    /// </summary>
+    private static Dictionary<(int Hero, Position Position), IReadOnlyList<StartItem>> BuildStartItems(
+        List<StartItemDto> rows, Dictionary<int, string> names)
+    {
+        const double MinShare = 0.4;
+        var result = new Dictionary<(int, Position), IReadOnlyList<StartItem>>();
+        foreach (var g in rows.Where(r => r.Position is >= 1 and <= 5).GroupBy(r => (r.HeroId, Pos: (Position)r.Position)))
+        {
+            // Если окно статистики позиций и закупок не совпало, берём за 100% самый частый предмет.
+            int total = g.Max(r => r.PositionGames);
+            int maxGames = g.Max(r => r.Games);
+            if (total <= 0 || maxGames > total * 1.2 || maxGames < total * 0.3) total = maxGames;
+            if (total <= 0) continue;
+
+            var items = g.GroupBy(r => r.ItemId)
+                .Select(ig =>
+                {
+                    var common = ig.Where(r => (double)r.Games / total >= MinShare).ToList();
+                    if (common.Count == 0) return null;
+                    // Номер экземпляра в данных может начинаться с 0 или 1 — считаем число частых экземпляров.
+                    int count = common.Select(r => r.Instance).Distinct().Count();
+                    double share = Math.Min(1, (double)ig.Max(r => r.Games) / total);
+                    return new StartItem(ig.Key, names.GetValueOrDefault(ig.Key, $"item {ig.Key}"), count, share);
+                })
+                .OfType<StartItem>()
+                .OrderByDescending(i => i.Share)
+                .ToList();
+            if (items.Count > 0) result[(g.Key.HeroId, g.Key.Pos)] = items;
+        }
+        return result;
     }
 
     private static string Join(params string?[] sources)

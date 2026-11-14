@@ -93,6 +93,9 @@
                             <CheckBox IsChecked="{Binding ShowReasons}" Foreground="{StaticResource Text}">
                                 <TextBlock Text="Показывать причины под героем" FontSize="14" />
                             </CheckBox>
+                            <CheckBox IsChecked="{Binding ShowPlan}" Foreground="{StaticResource Text}" Margin="0,10,0,0">
+                                <TextBlock Text="После пика показывать план на игру" FontSize="14" />
+                            </CheckBox>
                         </StackPanel>
                     </Border>
 

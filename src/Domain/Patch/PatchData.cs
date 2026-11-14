@@ -39,6 +39,18 @@ public sealed record LaneStats(int HeroId, int VsHeroId, int Games, int Wins, in
     public double Score => Games > 0 ? (Wins + 0.5 * Draws) / Games : 0.5;
 }
 
+/// <summary>Средние убийства и смерти героя в играх против другого героя (по STRATZ).</summary>
+public sealed record KdaStats(int HeroId, int VsHeroId, int Games, double KillsPerGame, double DeathsPerGame);
+
+/// <summary>Предмет стартовой закупки: Count штук берут в Share игр героя на позиции.</summary>
+public sealed record StartItem(int ItemId, string Name, int Count, double Share);
+
+/// <summary>
+/// Факты о способности из открытых данных Dota (dotaconstants): тип урона, проходит ли сквозь BKB,
+/// чем снимается, даёт ли невидимость. Только то, что указано в данных, без домыслов.
+/// </summary>
+public sealed record AbilityInfo(string Key, string Name, string DamageType, bool PiercesBkb, string Dispellable, bool Invisibility);
+
 public sealed class PatchData
 {
     public string PatchName { get; init; } = "unknown";
@@ -55,6 +67,12 @@ public sealed class PatchData
     public string PairSource { get; init; } = "none";
     public IReadOnlyDictionary<(int Hero, int Vs), LaneStats> Lanes { get; init; } = new Dictionary<(int, int), LaneStats>();
     public string LaneSource { get; init; } = "none";
+    public IReadOnlyDictionary<(int Hero, int Vs), KdaStats> Kda { get; init; } = new Dictionary<(int, int), KdaStats>();
+    public IReadOnlyDictionary<(int Hero, Position Position), IReadOnlyList<StartItem>> StartItems { get; init; } =
+        new Dictionary<(int, Position), IReadOnlyList<StartItem>>();
+    public IReadOnlyDictionary<int, IReadOnlyList<AbilityInfo>> Abilities { get; init; } = new Dictionary<int, IReadOnlyList<AbilityInfo>>();
+
+    public IReadOnlyList<AbilityInfo> AbilitiesOf(int heroId) => Abilities.TryGetValue(heroId, out var a) ? a : [];
 
     /// <summary>Исход линии героя против другого; если есть только обратная запись — победы и поражения меняются местами.</summary>
     public LaneStats? GetLane(int heroId, int vsHeroId)

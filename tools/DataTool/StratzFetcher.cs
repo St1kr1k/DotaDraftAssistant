@@ -58,6 +58,7 @@ internal static class StratzFetcher
         string F(string kind) => $"stratz_{kind}_{bracket}.json";
 
         // 1. Позиции — один запрос на всех героев.
+        var positionRows = new List<PositionDto>();
         try
         {
             var data = await Query(http, $$"""
@@ -70,6 +71,7 @@ internal static class StratzFetcher
                 .GroupBy(r => (r.Hero, r.Pos))
                 .Select(g => new PositionDto { HeroId = g.Key.Hero, Position = g.Key.Pos, Games = g.Sum(x => x.Games), Wins = g.Sum(x => x.Wins), Source = "stratz" })
                 .ToList();
+            positionRows = rows;
             Console.WriteLine($"STRATZ позиции: {rows.Count} строк, героев {rows.Select(r => r.HeroId).Distinct().Count()}");
             if (rows.Select(r => r.HeroId).Distinct().Count() >= heroIds.Count / 2)
             {
@@ -88,7 +90,7 @@ internal static class StratzFetcher
             var sb = new StringBuilder("{ heroStats {");
             foreach (var id in chunk)
             {
-                sb.Append($" m{id}: matchUp(heroId: {id}, bracketBasicIds: {Brackets}, take: 200) {{ heroId vs {{ heroId1 heroId2 matchCount winCount }} with {{ heroId1 heroId2 matchCount winCount }} }}");
+                sb.Append($" m{id}: matchUp(heroId: {id}, bracketBasicIds: {Brackets}, take: 200) {{ heroId vs {{ heroId1 heroId2 matchCount winCount kills deaths }} with {{ heroId1 heroId2 matchCount winCount }} }}");
                 sb.Append($" l{id}: laneOutcome(heroId: {id}, isWith: false, bracketBasicIds: {Brackets}) {{ heroId1 heroId2 matchCount winCount drawCount lossCount }}");
             }
             sb.Append(" } }");
@@ -107,7 +109,14 @@ internal static class StratzFetcher
                 {
                     foreach (var v in (dryad["vs"] as JsonArray ?? []).OfType<JsonObject>())
                         if (Int(v["heroId1"]) == id && Int(v["matchCount"]) > 0)
-                            matchups.Add(new MatchupDto { HeroId = id, VsHeroId = Int(v["heroId2"]), Games = Int(v["matchCount"]), Wins = Int(v["winCount"]), Source = "stratz" });
+                        {
+                            int mc = Int(v["matchCount"]);
+                            matchups.Add(new MatchupDto
+                            {
+                                HeroId = id, VsHeroId = Int(v["heroId2"]), Games = mc, Wins = Int(v["winCount"]), Source = "stratz",
+                                KillsPerGame = Dbl(v["kills"]) / mc, DeathsPerGame = Dbl(v["deaths"]) / mc,
+                            });
+                        }
                     foreach (var w in (dryad["with"] as JsonArray ?? []).OfType<JsonObject>())
                         if (Int(w["heroId1"]) == id && Int(w["matchCount"]) > 0)
                             pairs.Add(new PairDto { HeroId = id, AllyId = Int(w["heroId2"]), Games = Int(w["matchCount"]), Wins = Int(w["winCount"]), Source = "stratz" });
@@ -133,11 +142,25 @@ internal static class StratzFetcher
 
         // Сводим дубли (на случай нескольких недель/строк) и проверяем смысл чисел.
         matchups = matchups.GroupBy(m => (m.HeroId, m.VsHeroId))
-            .Select(g => new MatchupDto { HeroId = g.Key.HeroId, VsHeroId = g.Key.VsHeroId, Games = g.Sum(x => x.Games), Wins = g.Sum(x => x.Wins), Source = "stratz" }).ToList();
+            .Select(g => new MatchupDto
+            {
+                HeroId = g.Key.HeroId, VsHeroId = g.Key.VsHeroId, Games = g.Sum(x => x.Games), Wins = g.Sum(x => x.Wins), Source = "stratz",
+                KillsPerGame = g.Sum(x => (x.KillsPerGame ?? 0) * x.Games) / Math.Max(1, g.Sum(x => x.Games)),
+                DeathsPerGame = g.Sum(x => (x.DeathsPerGame ?? 0) * x.Games) / Math.Max(1, g.Sum(x => x.Games)),
+            }).ToList();
         lanes = lanes.GroupBy(m => (m.HeroId, m.VsHeroId))
             .Select(g => new LaneDto { HeroId = g.Key.HeroId, VsHeroId = g.Key.VsHeroId, Games = g.Sum(x => x.Games), Wins = g.Sum(x => x.Wins), Draws = g.Sum(x => x.Draws), Losses = g.Sum(x => x.Losses), Source = "stratz" }).ToList();
         pairs = pairs.GroupBy(m => (m.HeroId, m.AllyId))
             .Select(g => new PairDto { HeroId = g.Key.HeroId, AllyId = g.Key.AllyId, Games = g.Sum(x => x.Games), Wins = g.Sum(x => x.Wins), Source = "stratz" }).ToList();
+
+        // 4. Стартовая закупка — для позиций, на которых герой играет хотя бы в 15% игр.
+        try
+        {
+            var start = await FetchStartItems(http, Brackets, positionRows);
+            Console.WriteLine($"STRATZ стартовые предметы: {start.Count} строк");
+            if (start.Count > 0) await Save(patchDir, F("startitems"), start);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"STRATZ стартовые предметы не получены: {ex.Message}"); }
 
         double mSym = Symmetry(matchups.ToDictionary(m => (m.HeroId, m.VsHeroId), m => (double)m.Wins / m.Games));
         Console.WriteLine($"Проверка матчапов: WR(A,B)+WR(B,A) в среднем {mSym:F3} (должно быть ~1)");
@@ -167,6 +190,58 @@ internal static class StratzFetcher
             await Save(patchDir, F("pairs"), pairs);
             meta.PairSource = "STRATZ связки (по рангам)";
         }
+    }
+
+    private static async Task<List<StartItemDto>> FetchStartItems(HttpClient http, string brackets, List<PositionDto> positions)
+    {
+        var targets = positions
+            .GroupBy(p => p.HeroId)
+            .SelectMany(g =>
+            {
+                int total = g.Sum(p => p.Games);
+                return g.Where(p => total > 0 && p.Games >= 0.15 * total).Select(p => (p.HeroId, p.Position, p.Games));
+            })
+            .ToList();
+        var result = new List<StartItemDto>();
+        foreach (var chunk in targets.Chunk(15))
+        {
+            var sb = new StringBuilder("{ heroStats {");
+            foreach (var (hero, pos, _) in chunk)
+                sb.Append($" s{hero}_{pos}: itemStartingPurchase(heroId: {hero}, bracketBasicIds: {brackets}, positionIds: [POSITION_{pos}]) {{ itemId instance wasGiven matchCount }}");
+            sb.Append(" } }");
+            JsonNode? data;
+            try { data = await Query(http, sb.ToString()); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"\n  стартовые предметы: пачка пропущена: {ex.Message}");
+                continue;
+            }
+            foreach (var (hero, pos, games) in chunk)
+            {
+                foreach (var r in (data?["heroStats"]?[$"s{hero}_{pos}"] as JsonArray ?? []).OfType<JsonObject>())
+                {
+                    if (r["wasGiven"]?.GetValue<bool>() == true || Int(r["matchCount"]) <= 0) continue;
+                    result.Add(new StartItemDto
+                    {
+                        HeroId = hero, Position = pos, ItemId = Int(r["itemId"]), Instance = Int(r["instance"]),
+                        Games = Int(r["matchCount"]), PositionGames = games,
+                    });
+                }
+            }
+            Console.Write('.');
+            await Task.Delay(1200);
+        }
+        Console.WriteLine();
+        return result;
+    }
+
+    private static double Dbl(JsonNode? n)
+    {
+        if (n is not JsonValue v) return 0;
+        if (v.TryGetValue<double>(out var d)) return d;
+        if (v.TryGetValue<long>(out var l)) return l;
+        if (v.TryGetValue<decimal>(out var m)) return (double)m;
+        return v.TryGetValue<string>(out var s) && double.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, out var p) ? p : 0;
     }
 
     private static double Symmetry(Dictionary<(int, int), double> wr)

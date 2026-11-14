@@ -73,6 +73,12 @@ public sealed class OverlaySettingsViewModel : ObservableObject
         set { O.ShowReasons = value; _store.Save(); }
     }
 
+    public bool ShowPlan
+    {
+        get => O.ShowPlan;
+        set { O.ShowPlan = value; _store.Save(); }
+    }
+
     public static double ScaleOf(PopupSize size) => size switch
     {
         PopupSize.Small => 0.85,
@@ -102,7 +108,7 @@ public sealed class OverlaySettingsViewModel : ObservableObject
     private void RaiseAll()
     {
         foreach (var n in new[] { nameof(UntilMyPick), nameof(WholeDraft), nameof(SizeS), nameof(SizeM), nameof(SizeL),
-                                  nameof(Opacity), nameof(OpacityText), nameof(ShowReasons), nameof(PreviewBackground),
+                                  nameof(Opacity), nameof(OpacityText), nameof(ShowReasons), nameof(ShowPlan), nameof(PreviewBackground),
                                   nameof(PreviewWidth), nameof(PreviewHeight), nameof(PreviewLeft), nameof(PreviewTop) })
             Raise(n);
     }

@@ -4,6 +4,7 @@ using System.Windows.Threading;
 using DraftAssistant.Application.Abstractions;
 using DraftAssistant.Application.Configuration;
 using DraftAssistant.Application.Pipeline;
+using DraftAssistant.Application.Plan;
 using DraftAssistant.Application.Recommendation;
 using DraftAssistant.Application.Recommendation.Evaluators;
 using DraftAssistant.Application.Roles;
@@ -47,6 +48,9 @@ public partial class App : System.Windows.Application
     private DispatcherTimer? _positionTimer;
     private DraftSnapshot? _lastSnapshot;
     private bool _userHidden;
+    /// <summary>План на игру после вашего пика и до какого момента его показывать после конца драфта.</summary>
+    private GamePlan? _plan;
+    private DateTimeOffset? _planUntil;
     private string? _steamName;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -133,7 +137,7 @@ public partial class App : System.Windows.Application
         ];
         var recommendations = new RecommendationService(heroes, evaluators, scoring, roles);
         _pipeline = new DraftPipeline(detector, _gsi, recommendations, roles, heroes, patchProvider,
-                                      () => _profile.Current, _settings.Current, _log);
+                                      () => _profile.Current, _settings.Current, _log, new GamePlanService(roles));
         _profile.Changed += (_, _) => _pipeline.InvalidateRecommendations();
 
         // --- Presentation ---
@@ -175,7 +179,7 @@ public partial class App : System.Windows.Application
         _pipeline.SnapshotUpdated += (_, snapshot) => Dispatcher.InvokeAsync(() => OnSnapshot(snapshot));
 
         _positionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _positionTimer.Tick += (_, _) => PositionPopup();
+        _positionTimer.Tick += (_, _) => { UpdatePopupVisibility(); PositionPopup(); };
         _positionTimer.Start();
 
         _ = Task.Run(() => _pipeline.RunAsync(_cts.Token));
@@ -198,10 +202,30 @@ public partial class App : System.Windows.Application
     private void OnSnapshot(DraftSnapshot s)
     {
         _lastSnapshot = s;
+        bool inDraft = s.State.Phase is DraftPhase.DraftDetected or DraftPhase.BanPhase or DraftPhase.PickPhase;
+
+        if (s.Plan is not null)
+        {
+            _plan = s.Plan;
+            _planUntil = null; // пока идёт драфт, план виден без ограничения по времени
+        }
+        else if (inDraft && !s.OwnHeroPicked)
+        {
+            _plan = null; // новый драфт — старый план больше не нужен
+        }
+        if (_plan is not null && !inDraft && _planUntil is null)
+            _planUntil = DateTimeOffset.Now.AddSeconds(Math.Max(0, _settings.Current.Overlay.PlanLingerSeconds));
+
         _mainVm.Apply(s);
+        _popupVm.ShowPlan(PlanVisible() ? _plan : null);
         _popupVm.Apply(s);
         UpdatePopupVisibility();
     }
+
+    /// <summary>План виден после вашего пика до конца драфта и ещё PlanLingerSeconds после него.</summary>
+    private bool PlanVisible() =>
+        _plan is not null && _settings.Current.Overlay.ShowPlan &&
+        (_planUntil is null || DateTimeOffset.Now < _planUntil);
 
     /// <summary>
     /// Окошко видно во время драфта (по настройке — до вашего пика или весь драфт).
@@ -212,6 +236,11 @@ public partial class App : System.Windows.Application
         bool show;
         if (_popup.IsMoveMode)
         {
+            show = true;
+        }
+        else if (!_userHidden && PlanVisible())
+        {
+            if (!_popupVm.IsPlan) _popupVm.ShowPlan(_plan);
             show = true;
         }
         else if (_userHidden || _lastSnapshot is not { Status: PipelineStatus.Observing } s || !_popupVm.HasPicks)
@@ -240,6 +269,15 @@ public partial class App : System.Windows.Application
 
     private void ToggleUserHidden()
     {
+        // Пока показан план, Ctrl+Shift+O просто закрывает его (подсказки в следующем драфте появятся как обычно).
+        if (!_userHidden && PlanVisible())
+        {
+            _planUntil = DateTimeOffset.Now;
+            _popupVm.ShowPlan(null);
+            if (_lastSnapshot is not null) _popupVm.Apply(_lastSnapshot);
+            UpdatePopupVisibility();
+            return;
+        }
         _userHidden = !_userHidden;
         UpdatePopupVisibility();
     }
