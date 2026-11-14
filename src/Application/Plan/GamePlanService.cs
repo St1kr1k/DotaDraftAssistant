@@ -91,8 +91,13 @@ public sealed class GamePlanService(IRoleInferenceService roles)
                 laneAdvice = $"Линия в вашу пользу против {best.Enemy.LocalizedName}: давите с первых минут.";
         }
 
+        // Стартовая закупка на вашей позиции; если по ней данных нет — на самой частой позиции героя.
+        var start = patch.StartItems.TryGetValue((me.Id, position), out var exact) ? exact
+            : patch.StartItems.Where(kv => kv.Key.Hero == me.Id)
+                .OrderByDescending(kv => patch.GetPosition(me.Id, kv.Key.Position)?.Games ?? 0)
+                .Select(kv => kv.Value).FirstOrDefault() ?? [];
         return new GamePlan(me, position,
-            patch.StartItems.TryGetValue((me.Id, position), out var start) ? start : [],
+            start,
             laneAdvice, threats, targets, ItemTips(enemies, patch),
             $"STRATZ, {RankBrackets.Title(rank)} (старт — как у Легенда–Титан), патч {patch.PatchName}");
     }

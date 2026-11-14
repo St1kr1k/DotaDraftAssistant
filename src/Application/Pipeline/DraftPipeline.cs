@@ -403,6 +403,11 @@ public sealed class DraftPipeline
             {
                 _plan = _plans.Build(me, position, enemies, _patch, profile.Rank);
                 _planKey = key;
+                _log.Info($"План: {me.LocalizedName}, pos {(int)position}; старт: " +
+                          (_plan.StartItems.Count == 0 ? $"нет данных (в данных старт есть для {_patch.StartItems.Count} пар герой/позиция)"
+                                                       : string.Join(", ", _plan.StartItems.Select(i => i.Name))) +
+                          $"; опасны: {string.Join(", ", _plan.Threats.Select(t => t.Hero.LocalizedName))}" +
+                          $"; цели: {string.Join(", ", _plan.Targets.Select(t => t.Hero.LocalizedName))}");
             }
             catch (Exception ex)
             {
