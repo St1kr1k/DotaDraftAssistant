@@ -36,6 +36,8 @@ public sealed class PatchMetaDto
     public DateTimeOffset FetchedAt { get; set; }
     public string Source { get; set; } = "";
     public string MatchupSource { get; set; } = "";
+    public string PositionSource { get; set; } = "";
+    public string PairSource { get; set; } = "";
 }
 
 public sealed class HeroStatsDto
@@ -56,4 +58,26 @@ public sealed class MatchupDto
     public int VsHeroId { get; set; }
     public int Games { get; set; }
     public int Wins { get; set; }
+    /// <summary>Источник: "opendota", "stratz", … (пусто — opendota, старый формат).</summary>
+    public string? Source { get; set; }
+}
+
+/// <summary>Игры героя на позиции 1..5 по одному источнику.</summary>
+public sealed class PositionDto
+{
+    public int HeroId { get; set; }
+    public int Position { get; set; }
+    public int Games { get; set; }
+    public int Wins { get; set; }
+    public string Source { get; set; } = "";
+}
+
+/// <summary>Игры двух героев в одной команде по одному источнику.</summary>
+public sealed class PairDto
+{
+    public int HeroId { get; set; }
+    public int AllyId { get; set; }
+    public int Games { get; set; }
+    public int Wins { get; set; }
+    public string Source { get; set; } = "";
 }

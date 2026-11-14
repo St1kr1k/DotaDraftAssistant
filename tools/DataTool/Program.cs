@@ -174,6 +174,7 @@ internal static class Program
                     VsHeroId = m["hero_id"]!.GetValue<int>(),
                     Games = m["games_played"]!.GetValue<int>(),
                     Wins = m["wins"]!.GetValue<int>(),
+                    Source = "opendota",
                 }));
                 Console.Write('.');
                 await Task.Delay(delay);
@@ -184,12 +185,59 @@ internal static class Program
                 throw new InvalidOperationException($"слишком много пропущенных матчапов: {failedMatchups}");
         }
 
+        // Позиции по линиям (OpenDota /scenarios/laneRoles): лёгкая/мид/сложная.
+        // Лёгкая линия делится на pos 1 и pos 5, сложная — на pos 3 и pos 4 по тому,
+        // насколько герой «саппорт» по ролям Valve. Это приближение — STRATZ даёт позиции точно.
+        var positions = new List<PositionDto>();
+        if (!o.ContainsKey("no-positions"))
+        {
+            Console.WriteLine($"Позиции по линиям ({heroes.Count} запросов)…");
+            var prior = new DraftAssistant.Application.Roles.RoleTagPositionPrior();
+            foreach (var hero in heroes)
+            {
+                JsonArray arr;
+                try
+                {
+                    arr = await GetJson<JsonArray>(http, Q($"{OpenDota}/scenarios/laneRoles?hero_id={hero.Id}")) ?? new JsonArray();
+                }
+                catch (HttpRequestException ex)
+                {
+                    Console.Error.WriteLine($"\n  позиции {hero.LocalizedName} пропущены: {ex.Message}");
+                    continue;
+                }
+                var byLane = arr.OfType<JsonObject>()
+                    .GroupBy(r => Num(r["lane_role"]))
+                    .ToDictionary(g => g.Key, g => (Games: g.Sum(r => Num(r["games"])), Wins: g.Sum(r => Num(r["wins"]))));
+
+                var domainHero = new Hero(hero.Id, hero.Name, hero.LocalizedName, hero.PrimaryAttribute, hero.AttackType, hero.Roles, hero.Aliases);
+                var d = prior.Infer(domainHero);
+                double supportSafe = d[DraftAssistant.Domain.Player.Position.HardSupport] /
+                                     Math.Max(1e-6, d[DraftAssistant.Domain.Player.Position.HardSupport] + d[DraftAssistant.Domain.Player.Position.Carry]);
+                double supportOff = d[DraftAssistant.Domain.Player.Position.SoftSupport] /
+                                    Math.Max(1e-6, d[DraftAssistant.Domain.Player.Position.SoftSupport] + d[DraftAssistant.Domain.Player.Position.Offlane]);
+
+                void Add(int pos, (int Games, int Wins) lane, double fraction)
+                {
+                    int g = (int)Math.Round(lane.Games * fraction), w = (int)Math.Round(lane.Wins * fraction);
+                    if (g > 0) positions.Add(new PositionDto { HeroId = hero.Id, Position = pos, Games = g, Wins = w, Source = "opendota-lanes" });
+                }
+                if (byLane.TryGetValue(1, out var safe)) { Add(1, safe, 1 - supportSafe); Add(5, safe, supportSafe); }
+                if (byLane.TryGetValue(2, out var mid)) Add(2, mid, 1);
+                if (byLane.TryGetValue(3, out var off)) { Add(3, off, 1 - supportOff); Add(4, off, supportOff); }
+                Console.Write('.');
+                await Task.Delay(delay);
+            }
+            Console.WriteLine();
+            await File.WriteAllTextAsync(Path.Combine(patchDir, "positions.json"), JsonSerializer.Serialize(positions, DataFiles.Json));
+        }
+
         var meta = new PatchMetaDto
         {
             Patch = patchName,
             FetchedAt = DateTimeOffset.UtcNow,
             Source = "OpenDota heroStats (публичные матчи по бракетам)",
             MatchupSource = "OpenDota /heroes/{id}/matchups",
+            PositionSource = positions.Count > 0 ? "OpenDota /scenarios/laneRoles (pos 1/5 и 3/4 разделены по ролям героя)" : "",
         };
         await File.WriteAllTextAsync(Path.Combine(patchDir, "meta.json"), JsonSerializer.Serialize(meta, DataFiles.Json));
         Console.WriteLine($"Готово: {dataDir} (патч {patchName}, матчапов {matchups.Count})");
@@ -216,6 +264,20 @@ internal static class Program
             Console.Error.WriteLine($"\n  {code}, повтор через {wait.TotalSeconds:0} с…");
             await Task.Delay(wait);
         }
+    }
+
+    /// <summary>Число из JSON, где OpenDota иногда отдаёт числа строками.</summary>
+    private static int Num(JsonNode? n)
+    {
+        if (n is null) return 0;
+        if (n is JsonValue v)
+        {
+            if (v.TryGetValue<int>(out var i)) return i;
+            if (v.TryGetValue<long>(out var l)) return (int)l;
+            if (v.TryGetValue<double>(out var d)) return (int)d;
+            if (v.TryGetValue<string>(out var s) && int.TryParse(s, out var p)) return p;
+        }
+        return 0;
     }
 
     private static string ImageUrl(string? path, string fallback)

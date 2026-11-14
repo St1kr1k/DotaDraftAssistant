@@ -1,3 +1,5 @@
+using DraftAssistant.Application.Configuration;
+using DraftAssistant.Application.Roles;
 using DraftAssistant.Domain.Draft;
 using DraftAssistant.Domain.Heroes;
 using DraftAssistant.Domain.Patch;
@@ -23,14 +25,32 @@ public interface IRecommendationService
 /// DraftScore = 50 + 50 · Σ(wᵢ · valueᵢ · confidenceᵢ) / Σ wᵢ,  результат в [0; 100].
 ///
 /// Компонент с низкой уверенностью стягивается к нейтральному — так нехватка данных
-/// не превращается в уверенный вывод. Веса берутся только из конфигурации.
+/// не превращается в уверенный вывод. Веса берутся только из конфигурации и плавно
+/// переходят от «раннего» набора к «позднему» по мере того, как становятся известны враги.
+///
+/// Если есть статистика позиций, герои, которых на вашей позиции почти не играют
+/// (меньше MinPositionShare их игр), не предлагаются — кроме ваших ★ героев.
 /// </summary>
 public sealed class RecommendationService(
     IHeroRepository heroes,
     IEnumerable<IHeroEvaluator> evaluators,
-    Func<ScoringWeights> weights) : IRecommendationService
+    Func<ScoringOptions> options,
+    StatsRoleInference? positions = null) : IRecommendationService
 {
     private readonly IReadOnlyList<IHeroEvaluator> _evaluators = evaluators.ToList();
+
+    /// <summary>Веса для текущего драфта: 0 известных врагов — ранние, 5 — поздние.</summary>
+    public static ScoringWeights WeightsFor(ScoringOptions o, int knownEnemies) =>
+        ScoringWeights.Interpolate(o.WeightsEarly, o.WeightsLate, knownEnemies / 5.0);
+
+    private bool PlayedOnPosition(Hero hero, PlayerProfile profile, double minShare)
+    {
+        if (positions is null || minShare <= 0) return true;
+        var pref = profile.GetPreference(hero.Id);
+        if (pref is HeroPreference.Main or HeroPreference.Comfort) return true;
+        var share = positions.Share(hero, profile.MyPosition);
+        return share is null || share >= minShare;
+    }
 
     public IReadOnlyList<HeroRecommendation> Recommend(
         DraftState state,
@@ -41,11 +61,13 @@ public sealed class RecommendationService(
     {
         var context = BuildContext(state, profile, patch);
         var unavailable = state.UnavailableHeroes;
-        var w = weights();
+        var o = options();
+        var w = WeightsFor(o, context.Enemies.Count);
 
         return heroes.All
             .Where(h => !unavailable.Contains(h.Id))
             .Where(h => profile.GetPreference(h.Id) != HeroPreference.HardAvoid)
+            .Where(h => PlayedOnPosition(h, profile, o.MinPositionShare))
             .Select(h => Score(h, context, w, previousScores))
             .OrderByDescending(r => r.Score)
             .ThenBy(r => r.Hero.LocalizedName, StringComparer.Ordinal)
@@ -56,7 +78,9 @@ public sealed class RecommendationService(
     public HeroRecommendation? Evaluate(int heroId, DraftState state, PlayerProfile profile, PatchData patch)
     {
         var hero = heroes.Find(heroId);
-        return hero is null ? null : Score(hero, BuildContext(state, profile, patch), weights(), null);
+        if (hero is null) return null;
+        var context = BuildContext(state, profile, patch);
+        return Score(hero, context, WeightsFor(options(), context.Enemies.Count), null);
     }
 
     private DraftContext BuildContext(DraftState state, PlayerProfile profile, PatchData patch)

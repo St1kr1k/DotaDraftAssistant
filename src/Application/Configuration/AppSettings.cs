@@ -75,18 +75,57 @@ public sealed class RecognitionOptions
 
 public sealed class ScoringOptions
 {
-    public ScoringWeights Weights { get; set; } = new()
+    /// <summary>
+    /// Веса раннего пика (о врагах почти ничего не известно): важнее ваша позиция, сила героя в патче
+    /// и устойчивость к контрпику. Сумма — 100.
+    /// </summary>
+    public ScoringWeights WeightsEarly { get; set; } = new()
     {
         Weights = new()
         {
-            [ScoreComponent.Counter] = 0.25,
-            [ScoreComponent.Synergy] = 0.20,
-            [ScoreComponent.Meta] = 0.15,
-            [ScoreComponent.RoleFit] = 0.15,
-            [ScoreComponent.Comfort] = 0.10,
-            // Lane / Composition / Strategic появятся вместе со своими evaluator'ами.
+            [ScoreComponent.RoleFit] = 15,
+            [ScoreComponent.Comfort] = 15,
+            [ScoreComponent.Meta] = 25,
+            [ScoreComponent.Safety] = 10,
+            [ScoreComponent.Synergy] = 10,
+            [ScoreComponent.Pairs] = 5,
+            [ScoreComponent.Lane] = 10,
+            [ScoreComponent.Counter] = 10,
         },
     };
+
+    /// <summary>
+    /// Веса позднего пика (враги известны): линия и вся вражеская команда весят вместе 45%,
+    /// обе синергии (чего не хватает + связки) — 25%. Сумма — 100.
+    /// </summary>
+    public ScoringWeights WeightsLate { get; set; } = new()
+    {
+        Weights = new()
+        {
+            [ScoreComponent.RoleFit] = 10,
+            [ScoreComponent.Comfort] = 10,
+            [ScoreComponent.Meta] = 10,
+            [ScoreComponent.Safety] = 0,
+            [ScoreComponent.Synergy] = 15,
+            [ScoreComponent.Pairs] = 10,
+            [ScoreComponent.Lane] = 20,
+            [ScoreComponent.Counter] = 25,
+        },
+    };
+
+    /// <summary>Задать вес компонента сразу для раннего и позднего пика.</summary>
+    public void SetWeight(ScoreComponent component, double weight)
+    {
+        WeightsEarly.Weights[component] = weight;
+        WeightsLate.Weights[component] = weight;
+    }
+
+    /// <summary>
+    /// Герой не предлагается на позицию, если на ней проходит меньше этой доли его игр
+    /// (защита от «WK мид»: редкие специалисты дают высокий винрейт на чужой роли).
+    /// Работает, только когда есть статистика позиций.
+    /// </summary>
+    public double MinPositionShare { get; set; } = 0.10;
 
     /// <summary>Бракеты для мета-статистики (1 Herald ... 8 Immortal).</summary>
     public List<int> MetaBrackets { get; set; } = [5, 6, 7, 8];
@@ -94,10 +133,12 @@ public sealed class ScoringOptions
     /// <summary>Сглаживание винрейта: столько "виртуальных" игр с WR 50% добавляется к выборке.</summary>
     public int MetaPriorGames { get; set; } = 500;
     public int MatchupPriorGames { get; set; } = 40;
+    public int PairPriorGames { get; set; } = 150;
 
     /// <summary>Отклонение WR, которое соответствует максимальной оценке компонента (±1).</summary>
     public double MetaFullScaleWinrateDelta { get; set; } = 0.05;
     public double CounterFullScaleWinrateDelta { get; set; } = 0.04;
+    public double PairFullScaleWinrateDelta { get; set; } = 0.04;
 
     public double MainHeroValue { get; set; } = 1.0;
     public double ComfortHeroValue { get; set; } = 0.6;

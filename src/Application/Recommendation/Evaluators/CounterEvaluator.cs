@@ -32,7 +32,7 @@ public sealed class CounterEvaluator(Func<ScoringOptions> options) : ICounterpic
 
             double wr = (m.Wins + 0.5 * o.MatchupPriorGames) / (m.Games + (double)o.MatchupPriorGames);
             double adv = wr - 0.5;
-            double conf = m.Games / (m.Games + (double)o.MatchupPriorGames);
+            double conf = m.Games / (m.Games + (double)o.MatchupPriorGames) * m.Agreement;
             advantageSum += adv;
             confidenceSum += conf;
             known++;

@@ -42,9 +42,23 @@ public sealed class JsonHeroRepository : IHeroRepository
     public static JsonHeroRepository FromHeroes(IEnumerable<Hero> heroes) => new(heroes.ToList());
 }
 
-/// <summary>LocalPatchDataProvider: читает data/patch/*.json. RemotePatchDataProvider может реализовать тот же интерфейс.</summary>
+/// <summary>
+/// LocalPatchDataProvider: читает data/patch/*.json и объединяет источники.
+///
+/// Источники (OpenDota, STRATZ, …) берут одни и те же матчи Dota, поэтому игры не складываются:
+/// винрейт и доля позиции считаются как среднее, взвешенное по надёжности источника и размеру его выборки.
+/// Agreement показывает, согласны ли источники; при расхождении компонент оценки получает меньшую уверенность.
+/// </summary>
 public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatchDataProvider
 {
+    /// <summary>Насколько доверяем источнику (позиции у STRATZ точные, у OpenDota — разделение линий по ролям героя).</summary>
+    private static double Reliability(string? source) => (source ?? "opendota").ToLowerInvariant() switch
+    {
+        var s when s.StartsWith("stratz") => 1.0,
+        "opendota-lanes" => 0.6,
+        _ => 0.8,
+    };
+
     public PatchData Load()
     {
         var dir = DataFiles.PatchDir(dataDir);
@@ -53,6 +67,8 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             var meta = Read<PatchMetaDto>(Path.Combine(dir, "meta.json")) ?? new PatchMetaDto();
             var stats = Read<List<HeroStatsDto>>(Path.Combine(dir, "hero_stats.json")) ?? [];
             var matchups = Read<List<MatchupDto>>(Path.Combine(dir, "matchups.json")) ?? [];
+            var positions = Read<List<PositionDto>>(Path.Combine(dir, "positions.json")) ?? [];
+            var pairs = Read<List<PairDto>>(Path.Combine(dir, "pairs.json")) ?? [];
 
             return new PatchData
             {
@@ -60,14 +76,21 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
                 FetchedAt = meta.FetchedAt,
                 Source = meta.Source,
                 MatchupSource = meta.MatchupSource,
+                PositionSource = string.IsNullOrEmpty(meta.PositionSource) ? "none" : meta.PositionSource,
+                PairSource = string.IsNullOrEmpty(meta.PairSource) ? "none" : meta.PairSource,
                 HeroStats = stats.ToDictionary(
                     s => s.HeroId,
                     s => new HeroPatchStats(s.HeroId, s.Brackets
                         .Where(b => int.TryParse(b.Key, out _))
                         .ToDictionary(b => int.Parse(b.Key), b => new BracketStats(b.Value.Picks, b.Value.Wins)))),
-                Matchups = matchups
-                    .GroupBy(m => (m.HeroId, m.VsHeroId))
-                    .ToDictionary(g => g.Key, g => new MatchupStats(g.Key.HeroId, g.Key.VsHeroId, g.Sum(x => x.Games), g.Sum(x => x.Wins))),
+                Matchups = MergeMatchups(matchups),
+                Positions = MergePositions(positions),
+                Pairs = pairs.GroupBy(p => (p.HeroId, p.AllyId))
+                    .ToDictionary(g => g.Key, g =>
+                    {
+                        var (games, wins, _) = Merge(g.Select(x => (x.Games, x.Wins, x.Source)));
+                        return new PairStats(g.Key.HeroId, g.Key.AllyId, games, wins);
+                    }),
             };
         }
         catch (Exception ex)
@@ -75,6 +98,65 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             log.Error("Не удалось загрузить данные патча — рекомендации будут без Meta/Counter", ex);
             return PatchData.Empty;
         }
+    }
+
+    private static Dictionary<(int Hero, int Vs), MatchupStats> MergeMatchups(List<MatchupDto> rows) =>
+        rows.GroupBy(m => (m.HeroId, m.VsHeroId))
+            .ToDictionary(g => g.Key, g =>
+            {
+                var (games, wins, agreement) = Merge(g.Select(x => (x.Games, x.Wins, x.Source)));
+                return new MatchupStats(g.Key.HeroId, g.Key.VsHeroId, games, wins, agreement);
+            });
+
+    private static Dictionary<(int Hero, Position Position), PositionStats> MergePositions(List<PositionDto> rows)
+    {
+        // Доля позиции считается внутри каждого источника (игры на позиции / все игры героя в этом источнике).
+        var totals = rows.GroupBy(r => (r.HeroId, r.Source)).ToDictionary(g => g.Key, g => g.Sum(r => r.Games));
+        var result = new Dictionary<(int, Position), PositionStats>();
+        foreach (var g in rows.Where(r => r.Position is >= 1 and <= 5).GroupBy(r => (r.HeroId, Pos: (Position)r.Position)))
+        {
+            double wShare = 0, share = 0;
+            foreach (var r in g)
+            {
+                int total = totals.GetValueOrDefault((r.HeroId, r.Source));
+                if (total <= 0) continue;
+                double w = Reliability(r.Source) * total / (total + 300.0);
+                share += w * r.Games / total;
+                wShare += w;
+            }
+            var (games, wins, agreement) = Merge(g.Select(x => (x.Games, x.Wins, (string?)x.Source)));
+            result[(g.Key.HeroId, g.Key.Pos)] = new PositionStats(
+                g.Key.HeroId, g.Key.Pos, games, wins,
+                wShare > 0 ? share / wShare : 0,
+                agreement,
+                string.Join("+", g.Select(x => x.Source).Distinct()));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Объединение строк разных источников по одной сущности.
+    /// Games — максимум по источникам (не сумма: матчи общие), Wins — по взвешенному винрейту.
+    /// Agreement: один источник — его надёжность; несколько — 1, уменьшается при расхождении винрейтов (5% разницы → 0.4).
+    /// </summary>
+    internal static (int Games, int Wins, double Agreement) Merge(IEnumerable<(int Games, int Wins, string? Source)> rows)
+    {
+        var list = rows.Where(r => r.Games > 0).ToList();
+        if (list.Count == 0) return (0, 0, 0);
+        if (list.Count == 1) return (list[0].Games, list[0].Wins, Reliability(list[0].Source));
+
+        double wSum = 0, wrSum = 0;
+        foreach (var r in list)
+        {
+            double w = Reliability(r.Source) * r.Games / (r.Games + 300.0);
+            wrSum += w * r.Wins / r.Games;
+            wSum += w;
+        }
+        double wr = wrSum / wSum;
+        double spread = list.Max(r => (double)r.Wins / r.Games) - list.Min(r => (double)r.Wins / r.Games);
+        double agreement = 1 - Math.Clamp(spread / 0.05, 0, 1) * 0.6;
+        int games = list.Max(r => r.Games);
+        return (games, (int)Math.Round(wr * games), agreement);
     }
 
     private static T? Read<T>(string path) =>

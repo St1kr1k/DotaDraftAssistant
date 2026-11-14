@@ -1,3 +1,5 @@
+using DraftAssistant.Domain.Player;
+
 namespace DraftAssistant.Domain.Patch;
 
 public sealed record BracketStats(int Picks, int Wins);
@@ -16,8 +18,19 @@ public sealed record HeroPatchStats(int HeroId, IReadOnlyDictionary<int, Bracket
     }
 }
 
-/// <summary>Матчап: сколько игр HeroId сыграл против VsHeroId и сколько выиграл.</summary>
-public sealed record MatchupStats(int HeroId, int VsHeroId, int Games, int Wins);
+/// <summary>
+/// Матчап: сколько игр HeroId сыграл против VsHeroId и сколько выиграл.
+/// Agreement — насколько согласны источники (1 — полностью, 0 — сильно расходятся или источник один и мал).
+/// </summary>
+public sealed record MatchupStats(int HeroId, int VsHeroId, int Games, int Wins, double Agreement = 1);
+
+/// <summary>
+/// Герой на позиции: сколько игр на ней, сколько побед и какая доля всех игр героя приходится на эту позицию.
+/// </summary>
+public sealed record PositionStats(int HeroId, Position Position, int Games, int Wins, double Share, double Agreement, string Sources);
+
+/// <summary>Связка: герои в одной команде.</summary>
+public sealed record PairStats(int HeroId, int AllyId, int Games, int Wins);
 
 public sealed class PatchData
 {
@@ -27,6 +40,22 @@ public sealed class PatchData
     public string MatchupSource { get; init; } = "none";
     public IReadOnlyDictionary<int, HeroPatchStats> HeroStats { get; init; } = new Dictionary<int, HeroPatchStats>();
     public IReadOnlyDictionary<(int Hero, int Vs), MatchupStats> Matchups { get; init; } = new Dictionary<(int, int), MatchupStats>();
+    public IReadOnlyDictionary<(int Hero, Position Position), PositionStats> Positions { get; init; } = new Dictionary<(int, Position), PositionStats>();
+    public IReadOnlyDictionary<(int Hero, int Ally), PairStats> Pairs { get; init; } = new Dictionary<(int, int), PairStats>();
+    public string PositionSource { get; init; } = "none";
+    public string PairSource { get; init; } = "none";
+
+    public PositionStats? GetPosition(int heroId, Position position) =>
+        Positions.TryGetValue((heroId, position), out var p) ? p : null;
+
+    public bool HasPositions => Positions.Count > 0;
+
+    public PairStats? GetPair(int heroId, int allyId)
+    {
+        if (Pairs.TryGetValue((heroId, allyId), out var p)) return p;
+        if (Pairs.TryGetValue((allyId, heroId), out var r)) return new PairStats(heroId, allyId, r.Games, r.Wins);
+        return null;
+    }
 
     public static PatchData Empty { get; } = new();
 
@@ -38,7 +67,7 @@ public sealed class PatchData
     {
         if (Matchups.TryGetValue((heroId, vsHeroId), out var m)) return m;
         if (Matchups.TryGetValue((vsHeroId, heroId), out var r))
-            return new MatchupStats(heroId, vsHeroId, r.Games, r.Games - r.Wins);
+            return new MatchupStats(heroId, vsHeroId, r.Games, r.Games - r.Wins, r.Agreement);
         return null;
     }
 }

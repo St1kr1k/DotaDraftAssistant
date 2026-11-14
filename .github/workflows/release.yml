@@ -50,7 +50,7 @@ jobs:
           path: |
             data/heroes
             data/patch
-          key: dota-data-${{ steps.week.outputs.key }}
+          key: dota-data-v2-${{ steps.week.outputs.key }}
           restore-keys: dota-data-
 
       - name: Данные героев и патча (OpenDota / Steam CDN)
@@ -58,6 +58,29 @@ jobs:
         # Если есть данные прошлой недели, сбой OpenDota не ломает релиз — используем их.
         continue-on-error: ${{ steps.datacache.outputs.cache-matched-key != '' }}
         run: dotnet run --project tools/DataTool -c Release -- fetch --out data
+
+      # STRATZ (точные позиции, пары, исходы линий) — только если в репозитории есть секрет STRATZ_TOKEN.
+      # Пока сохраняем схему API как артефакт сборки, чтобы написать запросы под реальную схему.
+      - name: Схема STRATZ API
+        continue-on-error: true
+        shell: pwsh
+        env:
+          STRATZ_TOKEN: ${{ secrets.STRATZ_TOKEN }}
+        run: |
+          if (-not $env:STRATZ_TOKEN) { Write-Host "STRATZ_TOKEN не задан — пропускаю"; exit 0 }
+          $q = '{"query":"{ __schema { queryType { name } types { name kind fields { name args { name type { name kind ofType { name kind } } } type { name kind ofType { name kind ofType { name kind } } } } } } }"}'
+          $h = @{ Authorization = "Bearer $env:STRATZ_TOKEN"; "User-Agent" = "STRATZ_API"; "Content-Type" = "application/json" }
+          New-Item -ItemType Directory -Force stratz | Out-Null
+          Invoke-WebRequest -Uri https://api.stratz.com/graphql -Method Post -Headers $h -Body $q -OutFile stratz/schema.json
+          Write-Host "Схема STRATZ: $((Get-Item stratz/schema.json).Length) байт"
+
+      - name: Сохранить схему STRATZ
+        if: hashFiles('stratz/schema.json') != ''
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: stratz-schema
+          path: stratz/schema.json
 
       - name: Публикация приложения
         run: >

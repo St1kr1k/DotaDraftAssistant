@@ -118,17 +118,20 @@ public partial class App : System.Windows.Application
         }
 
         // --- Application: «мозг» ---
-        var roles = new RoleTagPositionPrior();
+        var roles = new StatsRoleInference(() => patch, new RoleTagPositionPrior());
         Func<ScoringOptions> scoring = () => _settings.Current.Scoring;
         IHeroEvaluator[] evaluators =
         [
             new CounterEvaluator(scoring),
+            new LaneEvaluator(roles, scoring),
             new TeamNeedsSynergyEvaluator(),
+            new PairSynergyEvaluator(scoring),
             new MetaEvaluator(scoring),
+            new SafetyEvaluator(),
             new RoleFitEvaluator(roles),
             new PlayerPreferenceEvaluator(scoring),
         ];
-        var recommendations = new RecommendationService(heroes, evaluators, () => _settings.Current.Scoring.Weights);
+        var recommendations = new RecommendationService(heroes, evaluators, scoring, roles);
         _pipeline = new DraftPipeline(detector, _gsi, recommendations, roles, heroes, patchProvider,
                                       () => _profile.Current, _settings.Current, _log);
         _profile.Changed += (_, _) => _pipeline.InvalidateRecommendations();
