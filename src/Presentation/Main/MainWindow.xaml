@@ -1,0 +1,68 @@
+<Window x:Class="DraftAssistant.Presentation.Main.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Dota Draft Assistant" Width="1440" Height="900" MinWidth="1180" MinHeight="760"
+        WindowStartupLocation="CenterScreen" Icon="/Assets/app.ico"
+        Background="{StaticResource Bg}" Foreground="{StaticResource Text}"
+        FontFamily="{StaticResource BodyFont}" WindowStyle="None" ResizeMode="CanResize">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="36" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Window.Resources>
+
+    <Border x:Name="Root" BorderBrush="{StaticResource Line}" BorderThickness="1">
+        <DockPanel>
+            <!-- Заголовок окна -->
+            <Grid DockPanel.Dock="Top" Height="36">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button Style="{StaticResource CaptionButton}" Click="OnMinimize" ToolTip="Свернуть" AutomationProperties.Name="Свернуть">
+                        <Path Data="M0,0 L10,0" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1" />
+                    </Button>
+                    <Button Style="{StaticResource CaptionButton}" Click="OnMaximize" ToolTip="Развернуть" AutomationProperties.Name="Развернуть">
+                        <Rectangle Width="10" Height="10" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1" />
+                    </Button>
+                    <Button Style="{StaticResource CaptionButton}" Click="OnClose" ToolTip="Закрыть" AutomationProperties.Name="Закрыть">
+                        <Path Data="M0,0 L10,10 M10,0 L0,10" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- Меню -->
+            <Border DockPanel.Dock="Left" Width="232" BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0" Padding="18,0,18,24">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,4,0,28">
+                        <Image Source="/Assets/app.ico" Width="26" Height="26" Margin="0,0,10,0" />
+                        <TextBlock FontFamily="{StaticResource HeadFont}" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" Foreground="{StaticResource TextStrong}">
+                            <Run Text="DRAFT" /><Run Text="·" Foreground="{StaticResource Accent}" /><Run Text="AI" />
+                        </TextBlock>
+                    </StackPanel>
+
+                    <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="12">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="6" Height="6" Fill="{Binding GameDot}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding GameText}" FontSize="12" Foreground="#C9C9CF" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding PatchText}" FontSize="12" Foreground="{StaticResource Muted}" Margin="0,6,0,0" />
+                            <TextBlock Text="{Binding UpdateText}" FontSize="12" Foreground="{StaticResource Muted}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                            <Button Content="Перезапустить и обновить" Style="{StaticResource AccentButton}" Margin="0,10,0,0" Padding="8,7" FontSize="12"
+                                    Click="OnRestartToUpdate" Visibility="{Binding CanRestartToUpdate, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel>
+                        <RadioButton x:Name="NavHeroes" Style="{StaticResource NavButton}" GroupName="Nav" Content="Герои" Checked="OnNav" />
+                        <RadioButton x:Name="NavPosition" Style="{StaticResource NavButton}" GroupName="Nav" Content="Позиция" Checked="OnNav" />
+                        <RadioButton x:Name="NavOverlay" Style="{StaticResource NavButton}" GroupName="Nav" Content="Оверлей" Checked="OnNav" />
+                        <RadioButton x:Name="NavCalibration" Style="{StaticResource NavButton}" GroupName="Nav" Content="Калибровка" Checked="OnNav" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- Раздел -->
+            <ContentControl x:Name="PageHost" Margin="40,4,40,32" Focusable="False" />
+        </DockPanel>
+    </Border>
+</Window>

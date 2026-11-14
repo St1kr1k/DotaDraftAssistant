@@ -102,14 +102,29 @@ public sealed class ScoringOptions
     public double SoftAvoidValue { get; set; } = -1.0;
 }
 
+public enum PopupShowMode
+{
+    /// <summary>Во время пиков, пока вы не выбрали героя.</summary>
+    UntilMyPick,
+    /// <summary>Весь драфт, включая баны и после вашего пика.</summary>
+    WholeDraft,
+}
+
+public enum PopupSize { Small, Medium, Large }
+
 public sealed class OverlayOptions
 {
-    public double Opacity { get; set; } = 0.92;
-    /// <summary>Отступ overlay от правого края окна Dota (доля ширины).</summary>
-    public double RightMargin { get; set; } = 0.01;
-    /// <summary>Отступ overlay от верха окна Dota (доля высоты).</summary>
-    public double TopOffset { get; set; } = 0.14;
-    public bool LearnMode { get; set; }
+    public double Opacity { get; set; } = 0.94;
+    /// <summary>Отступ окошка от правого края окна Dota по умолчанию (доля ширины).</summary>
+    public double RightMargin { get; set; } = 0.0125;
+    /// <summary>Отступ окошка от верха окна Dota по умолчанию (доля высоты).</summary>
+    public double TopOffset { get; set; } = 0.11;
+    /// <summary>Сохранённое положение левого верхнего угла (доли окна Dota). -1 = по умолчанию, справа сверху.</summary>
+    public double PositionX { get; set; } = -1;
+    public double PositionY { get; set; } = -1;
+    public PopupShowMode ShowMode { get; set; } = PopupShowMode.UntilMyPick;
+    public PopupSize Size { get; set; } = PopupSize.Medium;
+    public bool ShowReasons { get; set; } = true;
 }
 
 public sealed class GsiOptions

@@ -30,7 +30,9 @@ public sealed record DraftSnapshot(
     IReadOnlyList<HeroRecommendation> Recommendations,
     IReadOnlyDictionary<int, PositionDistribution> EnemyRoles,
     PatchData Patch,
-    double ScreenConfidence);
+    double ScreenConfidence,
+    /// <summary>Ваш герой уже выбран (по данным GSI). Окошко подсказок после этого скрывается.</summary>
+    bool OwnHeroPicked);
 
 /// <summary>
 /// Склеивает слои: детектор → трекер → машина состояний → рекомендации → событие для UI.
@@ -165,8 +167,9 @@ public sealed class DraftPipeline
             : null;
 
         bool sideChanged = _last?.State.MySide != side;
+        bool ownPickedChanged = _last is not null && _last.OwnHeroPicked != (hint?.OwnHeroId is not null);
         bool changed = slotsChanged || transition is not null || sideChanged || _recommendationsDirty
-                       || _last?.Status != status;
+                       || _last?.Status != status || ownPickedChanged;
         if (changed)
             Publish(state, status, message, sideSource, observation.ScreenConfidence, force: true);
     }
@@ -214,7 +217,8 @@ public sealed class DraftPipeline
             .Select(_heroes.Find).OfType<Hero>()
             .ToDictionary(h => h.Id, h => _roles.Infer(h));
 
-        _last = new DraftSnapshot(status, message, state, sideSource, recs, enemyRoles, _patch, screenConfidence);
+        bool ownPicked = FreshHint()?.OwnHeroId is not null;
+        _last = new DraftSnapshot(status, message, state, sideSource, recs, enemyRoles, _patch, screenConfidence, ownPicked);
         SnapshotUpdated?.Invoke(this, _last);
     }
 

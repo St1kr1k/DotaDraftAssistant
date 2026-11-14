@@ -5,7 +5,7 @@ using System.Windows.Interop;
 namespace DraftAssistant.Presentation.Interop;
 
 /// <summary>Стили окна overlay. Только собственные окна приложения — с окном Dota ничего не делается.</summary>
-internal static class NativeWindow
+public static class NativeWindow
 {
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -22,6 +22,18 @@ internal static class NativeWindow
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern nint SetWindowLongPtr(nint hWnd, int index, nint value);
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(nint hWnd, uint affinity);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(nint hWnd, nint after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hWnd, out ScreenRect rect);
+
+    /// <summary>Прямоугольник окна в физических пикселях экрана.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ScreenRect
+    {
+        public int Left, Top, Right, Bottom;
+        public readonly int Width => Right - Left;
+        public readonly int Height => Bottom - Top;
+    }
+
+    public static ScreenRect GetRect(Window w) => GetWindowRect(Handle(w), out var r) ? r : default;
 
     public static nint Handle(Window w) => new WindowInteropHelper(w).EnsureHandle();
 

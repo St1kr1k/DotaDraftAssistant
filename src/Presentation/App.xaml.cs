@@ -7,7 +7,7 @@ using DraftAssistant.Application.Pipeline;
 using DraftAssistant.Application.Recommendation;
 using DraftAssistant.Application.Recommendation.Evaluators;
 using DraftAssistant.Application.Roles;
-using DraftAssistant.Domain.Player;
+using DraftAssistant.Domain.Draft;
 using DraftAssistant.Domain.Scoring;
 using DraftAssistant.Infrastructure.Capture;
 using DraftAssistant.Infrastructure.Gsi;
@@ -15,9 +15,11 @@ using DraftAssistant.Infrastructure.Recognition;
 using DraftAssistant.Infrastructure.Storage;
 using DraftAssistant.Infrastructure.Vision;
 using DraftAssistant.Presentation.Calibration;
+using DraftAssistant.Presentation.Common;
 using DraftAssistant.Presentation.Interop;
-using DraftAssistant.Presentation.Overlay;
-using DraftAssistant.Presentation.Settings;
+using DraftAssistant.Presentation.Main;
+using DraftAssistant.Presentation.Pages;
+using DraftAssistant.Presentation.Popup;
 using DraftAssistant.Presentation.Updates;
 
 namespace DraftAssistant.Presentation;
@@ -29,20 +31,22 @@ public partial class App : System.Windows.Application
 
     private readonly CancellationTokenSource _cts = new();
     private IAppLog _log = NullLog.Instance;
-    private ISettingsRepository _settingsRepo = null!;
-    private AppSettings _settings = null!;
-    private volatile PlayerProfile _profile = new();
-    private JsonHeroRepository _heroes = null!;
+    private SettingsStore _settings = null!;
+    private ProfileStore _profile = null!;
     private GdiScreenCaptureService _capture = null!;
     private JsonLayoutStore _layout = null!;
-    private HeroTemplateLibrary _templates = null!;
+    private HeroTemplateLibrary? _templates;
     private GsiListener? _gsi;
     private DraftPipeline _pipeline = null!;
-    private OverlayViewModel _vm = null!;
-    private OverlayWindow _overlay = null!;
+    private AppUpdater _updater = null!;
+    private PopupViewModel _popupVm = null!;
+    private PopupWindow _popup = null!;
+    private MainWindow _main = null!;
+    private MainViewModel _mainVm = null!;
     private HotkeyManager? _hotkeys;
     private DispatcherTimer? _positionTimer;
-    private bool _interactive;
+    private DraftSnapshot? _lastSnapshot;
+    private bool _userHidden;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -57,42 +61,42 @@ public partial class App : System.Windows.Application
             args.Handled = true;
         };
 
-        _settingsRepo = new JsonSettingsRepository(userDir);
-        _settings = _settingsRepo.LoadSettings();
-        _profile = _settingsRepo.LoadProfile();
+        var settingsRepo = new JsonSettingsRepository(userDir);
+        _settings = new SettingsStore(settingsRepo, settingsRepo.LoadSettings());
+        _profile = new ProfileStore(settingsRepo, settingsRepo.LoadProfile());
 
+        JsonHeroRepository heroes;
         try
         {
-            _heroes = JsonHeroRepository.Load(dataDir);
+            heroes = JsonHeroRepository.Load(dataDir);
         }
         catch (FileNotFoundException ex)
         {
-            MessageBox.Show(
-                $"{ex.Message}\n\nСкачайте данные героев и патча:\n  dotnet run --project tools/DataTool -- fetch\nи пересоберите приложение.",
-                "Dota Draft Assistant", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show($"{ex.Message}\n\nПереустановите приложение или запустите DataTool fetch.",
+                            "Dota Draft Assistant", MessageBoxButton.OK, MessageBoxImage.Warning);
             Shutdown();
             return;
         }
+        var patchProvider = new LocalPatchDataProvider(dataDir, _log);
+        var patch = patchProvider.Load();
 
-        // --- Infrastructure: глаза ---
+        // --- Infrastructure: «глаза» ---
         _capture = new GdiScreenCaptureService();
         _layout = new JsonLayoutStore(userDir, dataDir);
-        _templates = HeroTemplateLibrary.LoadFromDirectory(DataFiles.HeroesDir(dataDir), _heroes.All.Select(h => h.Id));
-        _log.Info($"Templates loaded for {_templates.HeroCount}/{_heroes.All.Count} heroes");
+        _templates = HeroTemplateLibrary.LoadFromDirectory(DataFiles.HeroesDir(dataDir), heroes.All.Select(h => h.Id));
+        _log.Info($"Templates loaded for {_templates.HeroCount}/{heroes.All.Count} heroes");
 
-        Func<RecognitionOptions> recOptions = () => _settings.Recognition;
+        Func<RecognitionOptions> rec = () => _settings.Current.Recognition;
         var recognizer = new CompositeHeroRecognizer(
-            new TemplateHeroRecognizer(_templates, recOptions),
-            new ColorHistogramHeroRecognizer(_templates, recOptions),
-            recOptions);
-        var analyzer = new DraftFrameAnalyzer(_layout, recognizer, new SlotEmptinessClassifier(recOptions), recOptions);
+            new TemplateHeroRecognizer(_templates, rec), new ColorHistogramHeroRecognizer(_templates, rec), rec);
+        var analyzer = new DraftFrameAnalyzer(_layout, recognizer, new SlotEmptinessClassifier(rec), rec);
         var detector = new VisualDraftDetector(_capture, analyzer);
 
-        if (_settings.Gsi.Enabled)
+        if (_settings.Current.Gsi.Enabled)
         {
             try
             {
-                _gsi = new GsiListener(_settings.Gsi.Port, _log);
+                _gsi = new GsiListener(_settings.Current.Gsi.Port, _log);
                 _gsi.Start();
             }
             catch (Exception ex)
@@ -103,9 +107,9 @@ public partial class App : System.Windows.Application
             }
         }
 
-        // --- Application: мозг ---
+        // --- Application: «мозг» ---
         var roles = new RoleTagPositionPrior();
-        Func<ScoringOptions> scoring = () => _settings.Scoring;
+        Func<ScoringOptions> scoring = () => _settings.Current.Scoring;
         IHeroEvaluator[] evaluators =
         [
             new CounterEvaluator(scoring),
@@ -114,97 +118,158 @@ public partial class App : System.Windows.Application
             new RoleFitEvaluator(roles),
             new PlayerPreferenceEvaluator(scoring),
         ];
-        var recommendations = new RecommendationService(_heroes, evaluators, () => _settings.Scoring.Weights);
-
-        _pipeline = new DraftPipeline(
-            detector, _gsi, recommendations, roles, _heroes,
-            new LocalPatchDataProvider(dataDir, _log),
-            () => _profile, _settings, _log);
+        var recommendations = new RecommendationService(heroes, evaluators, () => _settings.Current.Scoring.Weights);
+        _pipeline = new DraftPipeline(detector, _gsi, recommendations, roles, heroes, patchProvider,
+                                      () => _profile.Current, _settings.Current, _log);
+        _profile.Changed += (_, _) => _pipeline.InvalidateRecommendations();
 
         // --- Presentation ---
-        _vm = new OverlayViewModel(_heroes)
-        {
-            VersionText = $"v{AppUpdater.CurrentVersion}",
-            PanelOpacity = _settings.Overlay.Opacity,
-            LearnMode = _settings.Overlay.LearnMode,
-        };
-        _overlay = new OverlayWindow(_vm);
-        _overlay.SettingsRequested += (_, _) => OpenSettings();
-        _overlay.CalibrationRequested += (_, _) => OpenCalibration();
-        _overlay.ExitRequested += (_, _) => Shutdown();
-        _overlay.SideOverrideChanged += (_, side) => _pipeline.SetManualSide(side);
-        _overlay.Show();
+        var images = new HeroImages(DataFiles.HeroesDir(dataDir));
 
-        _hotkeys = new HotkeyManager(_overlay);
-        if (!_hotkeys.Register(HotkeyManager.MOD_CONTROL | HotkeyManager.MOD_SHIFT, VK_D, ToggleInteractive))
+        _popupVm = new PopupViewModel(images);
+        _popupVm.ApplySettings(_settings.Current.Overlay);
+        _popup = new PopupWindow(_popupVm);
+        _popup.Moved += (_, rect) => SavePopupPosition(rect);
+        _settings.Changed += (_, _) =>
+        {
+            _popupVm.ApplySettings(_settings.Current.Overlay);
+            UpdatePopupVisibility();
+            PositionPopup();
+        };
+        // Окно создаётся сразу, чтобы горячие клавиши работали, даже пока оно скрыто.
+        NativeWindow.Handle(_popup);
+
+        var overlayVm = new OverlaySettingsViewModel(_settings);
+        overlayVm.MoveModeRequested += (_, _) => ToggleMoveMode();
+
+        _mainVm = new MainViewModel { VersionText = $"v{AppUpdater.CurrentVersion}", PatchText = $"Патч {patch.PatchName} · v{AppUpdater.CurrentVersion}" };
+        _main = new MainWindow(
+            _mainVm,
+            new HeroesPage(new HeroesViewModel(heroes, _profile, roles, patch, images)),
+            new PositionPage(new PositionViewModel(_profile, heroes, roles)),
+            new OverlayPage(overlayVm),
+            new CalibrationPage(_layout, OpenCalibration));
+        _main.Closed += (_, _) => Shutdown();
+        _main.RestartToUpdateRequested += (_, _) => _updater.RestartAndApply();
+        _main.Show();
+
+        _hotkeys = new HotkeyManager(_popup);
+        if (!_hotkeys.Register(HotkeyManager.MOD_CONTROL | HotkeyManager.MOD_SHIFT, VK_D, ToggleMoveMode))
             _log.Warn("Ctrl+Shift+D уже занят другим приложением");
-        if (!_hotkeys.Register(HotkeyManager.MOD_CONTROL | HotkeyManager.MOD_SHIFT, VK_O, ToggleVisibility))
+        if (!_hotkeys.Register(HotkeyManager.MOD_CONTROL | HotkeyManager.MOD_SHIFT, VK_O, ToggleUserHidden))
             _log.Warn("Ctrl+Shift+O уже занят другим приложением");
 
-        _pipeline.SnapshotUpdated += (_, snapshot) =>
-            Dispatcher.InvokeAsync(() => _vm.Apply(snapshot, _profile.MyPosition));
+        _pipeline.SnapshotUpdated += (_, snapshot) => Dispatcher.InvokeAsync(() => OnSnapshot(snapshot));
 
         _positionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _positionTimer.Tick += (_, _) => PositionOverlay();
+        _positionTimer.Tick += (_, _) => PositionPopup();
         _positionTimer.Start();
-        PositionOverlay();
 
         _ = Task.Run(() => _pipeline.RunAsync(_cts.Token));
 
-        // Автообновление в фоне: скачивается сейчас, ставится после закрытия приложения.
-        _ = Task.Run(async () =>
+        _updater = new AppUpdater(_log);
+        _updater.StatusChanged += (text, ready) => Dispatcher.InvokeAsync(() =>
         {
-            var text = await new AppUpdater(_log).CheckAndDownloadAsync();
-            if (text is not null) await Dispatcher.InvokeAsync(() => _vm.UpdateText = text);
+            _mainVm.UpdateText = text;
+            _mainVm.CanRestartToUpdate = ready;
         });
+        _ = Task.Run(() => _updater.RunAsync(_cts.Token));
 
-        // Первый запуск: сразу предлагаем заполнить профиль.
-        if (_profile.Preferences.Count == 0 && !File.Exists(Path.Combine(userDir, "profile.json")))
-            Dispatcher.InvokeAsync(OpenSettings, DispatcherPriority.ApplicationIdle);
+        // Первый запуск без калибровки — сразу показываем, что нужно сделать.
+        if (!_layout.Current.Calibrated) _main.ShowPage("calibration");
     }
 
-    private void ToggleInteractive()
+    private void OnSnapshot(DraftSnapshot s)
     {
-        _interactive = !_interactive;
-        _overlay.SetInteractive(_interactive);
+        _lastSnapshot = s;
+        _mainVm.Apply(s);
+        _popupVm.Apply(s, _profile.Current.MyPosition);
+        UpdatePopupVisibility();
     }
 
-    private void ToggleVisibility()
+    /// <summary>
+    /// Окошко видно во время драфта (по настройке — до вашего пика или весь драфт).
+    /// В режиме перемещения видно всегда, чтобы его можно было поставить на место.
+    /// </summary>
+    private void UpdatePopupVisibility()
     {
-        if (_overlay.IsVisible) _overlay.Hide();
-        else _overlay.Show();
+        bool show;
+        if (_popup.IsMoveMode)
+        {
+            show = true;
+        }
+        else if (_userHidden || _lastSnapshot is not { Status: PipelineStatus.Observing } s || !_popupVm.HasPicks)
+        {
+            show = false;
+        }
+        else
+        {
+            var phase = s.State.Phase;
+            bool inDraft = phase is DraftPhase.DraftDetected or DraftPhase.BanPhase or DraftPhase.PickPhase;
+            show = _settings.Current.Overlay.ShowMode == PopupShowMode.WholeDraft
+                ? inDraft
+                : inDraft && !s.OwnHeroPicked;
+        }
+
+        if (show && !_popup.IsVisible) { _popup.Show(); PositionPopup(); }
+        else if (!show && _popup.IsVisible) _popup.Hide();
     }
 
-    /// <summary>Overlay прилипает к правому краю окна Dota (физические пиксели).</summary>
-    private void PositionOverlay()
+    private void ToggleMoveMode()
     {
+        _popup.SetMoveMode(!_popup.IsMoveMode);
+        UpdatePopupVisibility();
+        PositionPopup();
+    }
+
+    private void ToggleUserHidden()
+    {
+        _userHidden = !_userHidden;
+        UpdatePopupVisibility();
+    }
+
+    /// <summary>Положение окошка — в долях окна Dota, поэтому переживает смену разрешения.</summary>
+    private void PositionPopup()
+    {
+        if (!_popup.IsVisible || _popup.IsMoveMode) return;
         var window = _capture.FindGameWindow();
         if (window is null || window.IsMinimized) return;
-        var source = PresentationSource.FromVisual(_overlay);
-        double scale = source?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
-        int overlayWidthPx = (int)Math.Round(_overlay.ActualWidth * scale);
-        int x = window.ClientRect.Right - overlayWidthPx - (int)(window.ClientRect.Width * _settings.Overlay.RightMargin);
-        int y = window.ClientRect.Y + (int)(window.ClientRect.Height * _settings.Overlay.TopOffset);
-        NativeWindow.MoveTo(_overlay, x, y);
-    }
 
-    private void OpenSettings()
-    {
-        var dlg = new SettingsWindow(_heroes, _profile.Clone());
-        if (dlg.ShowDialog() == true && dlg.Result is { } profile)
+        var o = _settings.Current.Overlay;
+        var c = window.ClientRect;
+        var size = NativeWindow.GetRect(_popup);
+        int x, y;
+        if (o.PositionX < 0 || o.PositionY < 0)
         {
-            _profile = profile;
-            _settingsRepo.SaveProfile(profile);
-            _pipeline.InvalidateRecommendations();
-            if (_pipeline.Last is { } last) _vm.Apply(last, profile.MyPosition);
+            x = c.Right - size.Width - (int)(c.Width * o.RightMargin);
+            y = c.Y + (int)(c.Height * o.TopOffset);
         }
+        else
+        {
+            x = c.X + (int)(c.Width * o.PositionX);
+            y = c.Y + (int)(c.Height * o.PositionY);
+        }
+        x = Math.Clamp(x, c.X, Math.Max(c.X, c.Right - size.Width));
+        y = Math.Clamp(y, c.Y, Math.Max(c.Y, c.Bottom - size.Height));
+        NativeWindow.MoveTo(_popup, x, y);
     }
 
-    private void OpenCalibration()
+    private void SavePopupPosition(NativeWindow.ScreenRect rect)
     {
-        var dlg = new CalibrationWindow(_capture, _layout);
+        var window = _capture.FindGameWindow();
+        if (window is null || window.ClientRect.IsEmpty) return;
+        var c = window.ClientRect;
+        _settings.Current.Overlay.PositionX = Math.Clamp((rect.Left - c.X) / (double)c.Width, 0, 1);
+        _settings.Current.Overlay.PositionY = Math.Clamp((rect.Top - c.Y) / (double)c.Height, 0, 1);
+        _settings.Save();
+    }
+
+    private bool OpenCalibration()
+    {
+        var dlg = new CalibrationWindow(_capture, _layout) { Owner = _main };
         dlg.ShowDialog();
         if (dlg.Saved) _pipeline.InvalidateRecommendations();
+        return dlg.Saved;
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -213,12 +278,7 @@ public partial class App : System.Windows.Application
         _positionTimer?.Stop();
         _hotkeys?.Dispose();
         _gsi?.Dispose();
-        if (_settings is not null)
-        {
-            _settings.Overlay.Opacity = _vm?.PanelOpacity ?? _settings.Overlay.Opacity;
-            _settings.Overlay.LearnMode = _vm?.LearnMode ?? false;
-            _settingsRepo?.SaveSettings(_settings);
-        }
+        _settings?.Save();
         base.OnExit(e);
     }
 }
