@@ -25,13 +25,16 @@ jobs:
           FILTER: ${{ inputs.filter }}
         shell: python
         run: |
-          import json, os, re, urllib.request
+          import json, os, re, urllib.request, urllib.error
           def gql(q):
               req = urllib.request.Request("https://api.stratz.com/graphql",
                   data=json.dumps({"query": q}).encode(),
                   headers={"Authorization": "Bearer " + os.environ["STRATZ_TOKEN"],
                            "User-Agent": "STRATZ_API", "Content-Type": "application/json"})
-              return json.load(urllib.request.urlopen(req, timeout=60))
+              try:
+                  return json.load(urllib.request.urlopen(req, timeout=60))
+              except urllib.error.HTTPError as e:
+                  print("{HTTP", e.code, e.read().decode(errors="replace")[:3000]); raise SystemExit(0)
           q = os.environ.get("QUERY", "").strip()
           if q:
               print(json.dumps(gql(q), ensure_ascii=False)[:60000])
