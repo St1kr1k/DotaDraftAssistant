@@ -102,10 +102,12 @@ internal static class StratzFetcher
                 foreach (var l in (hs?[$"l{id}"] as JsonArray ?? []).OfType<JsonObject>())
                 {
                     int vs = Int(l["heroId2"]);
-                    if (Int(l["heroId1"]) != id || vs == id || Int(l["matchCount"]) <= 0) continue;
+                    // Исход линии известен не во всех играх: считаем только игры с исходом.
+                    int decided = Int(l["winCount"]) + Int(l["drawCount"]) + Int(l["lossCount"]);
+                    if (Int(l["heroId1"]) != id || vs == id || decided <= 0) continue;
                     lanes.Add(new LaneDto
                     {
-                        HeroId = id, VsHeroId = vs, Games = Int(l["matchCount"]),
+                        HeroId = id, VsHeroId = vs, Games = decided,
                         Wins = Int(l["winCount"]), Draws = Int(l["drawCount"]), Losses = Int(l["lossCount"]), Source = "stratz",
                     });
                 }
