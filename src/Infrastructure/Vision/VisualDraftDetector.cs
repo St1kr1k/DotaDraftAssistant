@@ -178,5 +178,4 @@ public sealed class VisualDraftDetector : IDraftDetector
             // Отладочные кадры не должны мешать работе.
         }
     }
-    }
 }
