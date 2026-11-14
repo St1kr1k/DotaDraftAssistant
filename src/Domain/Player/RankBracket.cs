@@ -34,9 +34,9 @@ public static class RankBrackets
 
     public static string Title(RankBracket rank) => rank switch
     {
-        RankBracket.HeraldGuardian => "Herald – Guardian",
-        RankBracket.CrusaderArchon => "Crusader – Archon",
-        RankBracket.DivineImmortal => "Divine – Immortal",
-        _ => "Legend – Ancient",
+        RankBracket.HeraldGuardian => "Рекрут – Страж",
+        RankBracket.CrusaderArchon => "Рыцарь – Герой",
+        RankBracket.DivineImmortal => "Божество – Титан",
+        _ => "Легенда – Властелин",
     };
 }
