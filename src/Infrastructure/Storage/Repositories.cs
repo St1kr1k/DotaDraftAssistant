@@ -79,7 +79,16 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             var positions = ReadAll<PositionDto>(dir, "positions.json", S("positions"));
             var pairs = ReadAll<PairDto>(dir, "pairs.json", S("pairs"));
             var lanes = ReadAll<LaneDto>(dir, S("lanes"));
-            var startItems = ReadAll<StartItemDto>(dir, S("startitems"));
+            // Стартовую закупку берём у сильных игроков (Легенда–Титан), а не по рангу пользователя:
+            // цель — научиться правильному старту, а не повторять типичный для своего ранга.
+            var startItems = ReadAll<StartItemDto>(dir, "stratz_startitems_LEGEND_ANCIENT.json", "stratz_startitems_DIVINE_IMMORTAL.json");
+            if (startItems.Count == 0) startItems = ReadAll<StartItemDto>(dir, S("startitems"));
+            startItems = startItems.GroupBy(r => (r.HeroId, r.Position, r.ItemId, r.Instance))
+                .Select(g => new StartItemDto
+                {
+                    HeroId = g.Key.HeroId, Position = g.Key.Position, ItemId = g.Key.ItemId, Instance = g.Key.Instance,
+                    Games = g.Sum(r => r.Games), PositionGames = g.Sum(r => r.PositionGames),
+                }).ToList();
             var itemInfo = ReadAll<ItemDto>(dir, "items.json").GroupBy(i => i.Id).ToDictionary(g => g.Key, g => g.First());
             var abilities = ReadAll<HeroAbilitiesDto>(dir, "abilities.json");
             // Строки без источника — из старых файлов OpenDota.

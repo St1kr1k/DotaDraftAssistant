@@ -94,7 +94,7 @@ public sealed class GamePlanService(IRoleInferenceService roles)
         return new GamePlan(me, position,
             patch.StartItems.TryGetValue((me.Id, position), out var start) ? start : [],
             laneAdvice, threats, targets, ItemTips(enemies, patch),
-            $"STRATZ, {RankBrackets.Title(rank)}, патч {patch.PatchName}");
+            $"STRATZ, {RankBrackets.Title(rank)} (старт — как у Легенда–Титан), патч {patch.PatchName}");
     }
 
     /// <summary>Причины угрозы — только отрицательные, причины цели — только положительные.</summary>
