@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Presentation: WPF overlay. Только отображение и пользовательские настройки — никаких расчётов score. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>DraftAssistant.Presentation</RootNamespace>
+    <AssemblyName>DotaDraftAssistant</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Свой Main: Velopack должен отработать раньше, чем стартует WPF. -->
+    <StartupObject>DraftAssistant.Presentation.Program</StartupObject>
+    <Product>Dota Draft Assistant</Product>
+    <!-- Версию и адрес репозитория для автообновлений подставляет CI (-p:Version=... -p:UpdateRepoUrl=...). -->
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Domain\DraftAssistant.Domain.csproj" />
+    <ProjectReference Include="..\Application\DraftAssistant.Application.csproj" />
+    <ProjectReference Include="..\Infrastructure\DraftAssistant.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Установщик + автообновления (Setup.exe, GitHub Releases). -->
+    <PackageReference Include="Velopack" Version="0.0.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="UpdateRepoUrl" Value="$(UpdateRepoUrl)" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Данные героев/патча (создаются DataTool'ом) лежат рядом с exe и попадают в установщик. -->
+    <None Include="..\..\data\**\*" LinkBase="data"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+</Project>

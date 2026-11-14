@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Чистый domain: никаких зависимостей от Windows, OpenCV или UI. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>DraftAssistant.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

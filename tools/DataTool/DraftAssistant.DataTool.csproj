@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Инструмент данных и отладки: скачивание героев/патча, проверка разметки на скриншотах, добавление шаблонов. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <RootNamespace>DraftAssistant.DataTool</RootNamespace>
+    <AssemblyName>DataTool</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Infrastructure\DraftAssistant.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

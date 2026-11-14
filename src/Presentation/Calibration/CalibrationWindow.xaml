@@ -1,0 +1,31 @@
+<Window x:Class="DraftAssistant.Presentation.Calibration.CalibrationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Draft Assistant — калибровка экрана драфта" Width="1280" Height="820"
+        WindowStartupLocation="CenterScreen" Topmost="True" FontFamily="Segoe UI">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Padding="10" Background="#F2F4F7">
+            <StackPanel>
+                <WrapPanel>
+                    <Button Content="Захватить окно Dota 2" Padding="8,3" Margin="0,0,8,0" Click="OnCaptureDota" />
+                    <Button Content="Открыть скриншот…" Padding="8,3" Margin="0,0,8,0" Click="OnOpenScreenshot" />
+                    <Button Content="Начать заново" Padding="8,3" Margin="0,0,8,0" Click="OnReset" />
+                    <Button x:Name="SkipButton" Content="Пропустить сигнатуру" Padding="8,3" Margin="0,0,8,0" Click="OnSkip" IsEnabled="False" />
+                    <CheckBox x:Name="EmptySlotsBox" VerticalAlignment="Center" Margin="8,0,8,0"
+                              Content="На кадре все слоты пустые (сохранить эталон пустого слота)" />
+                    <Button x:Name="SaveButton" Content="Сохранить" Padding="12,3" FontWeight="Bold" Click="OnSave" IsEnabled="False" />
+                </WrapPanel>
+                <TextBlock x:Name="Instruction" Margin="0,8,0,0" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock x:Name="Hint" Margin="0,2,0,0" Foreground="#555" TextWrapping="Wrap"
+                           Text="Нужен кадр экрана выбора героев. Скриншот должен быть в разрешении игры (например, F12 в Steam). Обведите прямоугольник мышью; слоты 2–4 рассчитаются автоматически." />
+            </StackPanel>
+        </Border>
+        <Viewbox Stretch="Uniform" Margin="6">
+            <Grid x:Name="Surface">
+                <Image x:Name="FrameImage" Stretch="None" />
+                <Canvas x:Name="DrawCanvas" Background="Transparent"
+                        MouseLeftButtonDown="OnMouseDown" MouseMove="OnMouseMove" MouseLeftButtonUp="OnMouseUp" />
+            </Grid>
+        </Viewbox>
+    </DockPanel>
+</Window>

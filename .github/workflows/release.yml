@@ -1,0 +1,76 @@
+# Собирает приложение на серверах GitHub и публикует установщик в Releases.
+# Друг скачивает один файл:
+#   https://github.com/<владелец>/<репозиторий>/releases/latest/download/DotaDraftAssistant-win-Setup.exe
+# Установленные копии обновляются сами.
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:          # кнопка "Run workflow" во вкладке Actions
+  schedule:
+    - cron: '0 5 * * 3'       # раз в неделю: свежая статистика патча → новая версия → автообновление у всех
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      VERSION: 1.0.${{ github.run_number }}
+      REPO_URL: https://github.com/${{ github.repository }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Тесты
+        run: dotnet test -c Release
+
+      - name: Данные героев и патча (OpenDota / Steam CDN)
+        run: dotnet run --project tools/DataTool -c Release -- fetch --out data
+
+      - name: Публикация приложения
+        run: >
+          dotnet publish src/Presentation/DraftAssistant.Overlay.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:Version=${{ env.VERSION }}
+          -p:UpdateRepoUrl=${{ env.REPO_URL }}
+          -o publish
+
+      - name: Копия GSI-конфига в поставку
+        shell: pwsh
+        run: Copy-Item gsi/gamestate_integration_draftassistant.cfg publish/
+
+      - name: Установка Velopack CLI
+        run: dotnet tool install -g vpk
+
+      - name: Предыдущий релиз (для дельта-обновлений)
+        continue-on-error: true   # при самом первом релизе предыдущего нет
+        run: vpk download github --repoUrl ${{ env.REPO_URL }} --token ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Сборка установщика
+        run: >
+          vpk pack
+          --packId DotaDraftAssistant
+          --packVersion ${{ env.VERSION }}
+          --packDir publish
+          --mainExe DotaDraftAssistant.exe
+          --packTitle "Dota Draft Assistant"
+
+      - name: Публикация в GitHub Releases
+        run: >
+          vpk upload github
+          --repoUrl ${{ env.REPO_URL }}
+          --publish
+          --releaseName "Dota Draft Assistant ${{ env.VERSION }}"
+          --tag v${{ env.VERSION }}
+          --token ${{ secrets.GITHUB_TOKEN }}

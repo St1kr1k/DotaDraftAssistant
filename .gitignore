@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+debug/
+# Скачанные данные (воспроизводятся DataTool fetch)
+data/heroes/
+data/patch/
+release/
