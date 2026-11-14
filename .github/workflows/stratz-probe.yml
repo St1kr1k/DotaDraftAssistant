@@ -1,0 +1,55 @@
+# Пробные запросы к STRATZ API (только чтение общей статистики). Релизы не создаёт.
+# Без параметра — печатает схему API в компактном виде; с параметром query — выполняет GraphQL-запрос.
+name: STRATZ probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: 'GraphQL-запрос (пусто — вывести схему)'
+        required: false
+        default: ''
+      filter:
+        description: 'Регулярка по имени типа для вывода схемы'
+        required: false
+        default: 'Hero|Lane|Position|Matchup|DotaQuery|Constant|Bracket|Rank|Game'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Запрос
+        env:
+          STRATZ_TOKEN: ${{ secrets.STRATZ_TOKEN }}
+          QUERY: ${{ inputs.query }}
+          FILTER: ${{ inputs.filter }}
+        shell: python
+        run: |
+          import json, os, re, urllib.request
+          def gql(q):
+              req = urllib.request.Request("https://api.stratz.com/graphql",
+                  data=json.dumps({"query": q}).encode(),
+                  headers={"Authorization": "Bearer " + os.environ["STRATZ_TOKEN"],
+                           "User-Agent": "STRATZ_API", "Content-Type": "application/json"})
+              return json.load(urllib.request.urlopen(req, timeout=60))
+          q = os.environ.get("QUERY", "").strip()
+          if q:
+              print(json.dumps(gql(q), ensure_ascii=False)[:60000])
+          else:
+              def t(x):
+                  if x is None: return "?"
+                  if x["kind"] == "NON_NULL": return t(x["ofType"]) + "!"
+                  if x["kind"] == "LIST": return "[" + t(x["ofType"]) + "]"
+                  return x["name"]
+              T = "type { kind name ofType { kind name ofType { kind name ofType { kind name } } } }"
+              s = gql("{ __schema { types { name kind enumValues { name } fields { name args { name %s } %s } } } }" % (T, T))
+              f = re.compile(os.environ.get("FILTER") or ".")
+              for ty in s["data"]["__schema"]["types"]:
+                  if ty["name"].startswith("__") or not f.search(ty["name"]): continue
+                  if ty["enumValues"]:
+                      print(f"enum {ty['name']}: " + ", ".join(e["name"] for e in ty["enumValues"])[:600]); continue
+                  if not ty["fields"]: continue
+                  print(f"type {ty['name']}")
+                  for fl in ty["fields"]:
+                      args = ", ".join(f"{a['name']}: {t(a['type'])}" for a in fl["args"])
+                      print(f"  {fl['name']}({args}): {t(fl['type'])}" if args else f"  {fl['name']}: {t(fl['type'])}")
