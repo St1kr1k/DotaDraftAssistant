@@ -20,7 +20,7 @@ public enum PipelineStatus
     Error,
 }
 
-public enum SideSource { None, Gsi, OwnHeroMatch, Manual }
+public enum SideSource { None, Gsi, Screen, OwnHeroMatch, Manual }
 
 public sealed record DraftSnapshot(
     PipelineStatus Status,
@@ -32,7 +32,11 @@ public sealed record DraftSnapshot(
     PatchData Patch,
     double ScreenConfidence,
     /// <summary>Ваш герой уже выбран (по данным GSI). Окошко подсказок после этого скрывается.</summary>
-    bool OwnHeroPicked);
+    bool OwnHeroPicked,
+    /// <summary>Позиция, под которую считаются рекомендации.</summary>
+    Position EffectivePosition,
+    /// <summary>true — позиция прочитана с экрана драфта (рейтинг), false — взята из профиля.</summary>
+    bool PositionFromDraft);
 
 /// <summary>
 /// Склеивает слои: детектор → трекер → машина состояний → рекомендации → событие для UI.
@@ -56,6 +60,12 @@ public sealed class DraftPipeline
     private volatile bool _recommendationsDirty = true;
     private volatile int _manualSide = -1; // -1 = авто
     private DraftSnapshot? _last;
+
+    // Прочитанное с экрана за текущий драфт (сбрасывается при новом драфте).
+    private readonly Dictionary<SlotId, Position> _positions = new();
+    private readonly HashSet<int> _chatBans = new();
+    private DraftSide? _screenAllySide;
+    private int? _mySlot;
     // Оценки всех героев до последнего изменения драфта и после него — для дельты "82 → 94".
     private IReadOnlyDictionary<int, double> _baselineScores = new Dictionary<int, double>();
     private IReadOnlyDictionary<int, double> _currentScores = new Dictionary<int, double>();
@@ -149,6 +159,10 @@ public sealed class DraftPipeline
         {
             _log.Info("Draft detected — новый драфт, состояние сброшено");
             _tracker.Reset();
+            _positions.Clear();
+            _chatBans.Clear();
+            _screenAllySide = null;
+            _mySlot = null;
             _baselineScores = new Dictionary<int, double>();
             _currentScores = new Dictionary<int, double>();
             if (observation.DraftScreenVisible) _tracker.Update(observation.Slots);
@@ -156,8 +170,15 @@ public sealed class DraftPipeline
         }
         if (transition is not null) _log.Info($"Phase {transition.From} → {transition.To}");
 
+        bool textChanged = observation.DraftScreenVisible && _machine.Phase != DraftPhase.Idle && MergeText(observation);
+
         var (side, sideSource) = ResolveSide(hint, slots);
-        var state = new DraftState(_machine.Phase, slots, side, observation.Timestamp);
+        var state = new DraftState(_machine.Phase, slots, side, observation.Timestamp)
+        {
+            Positions = new Dictionary<SlotId, Position>(_positions),
+            ExtraBans = new HashSet<int>(_chatBans),
+            MySlotIndex = _mySlot,
+        };
 
         var status = observation.Issue == ObservationIssue.LayoutNotCalibrated
             ? PipelineStatus.LayoutNotCalibrated
@@ -169,7 +190,7 @@ public sealed class DraftPipeline
         bool sideChanged = _last?.State.MySide != side;
         bool ownPickedChanged = _last is not null && _last.OwnHeroPicked != (hint?.OwnHeroId is not null);
         bool changed = slotsChanged || transition is not null || sideChanged || _recommendationsDirty
-                       || _last?.Status != status || ownPickedChanged;
+                       || _last?.Status != status || ownPickedChanged || textChanged;
         if (changed)
             Publish(state, status, message, sideSource, observation.ScreenConfidence, force: true);
     }
@@ -185,6 +206,8 @@ public sealed class DraftPipeline
     {
         if (_manualSide >= 0) return ((DraftSide)_manualSide, SideSource.Manual);
         if (hint?.Team is { } team) return (team, SideSource.Gsi);
+        // Подписи ролей в рейтинге видны только у своей команды.
+        if (_screenAllySide is { } screen) return (screen, SideSource.Screen);
         if (hint?.OwnHeroId is { } own)
         {
             var slot = slots.FirstOrDefault(s => s.Id.Kind == SlotKind.Pick && s.Status == SlotStatus.Confirmed && s.HeroId == own);
@@ -195,10 +218,50 @@ public sealed class DraftPipeline
         return (null, SideSource.None);
     }
 
+    /// <summary>Добавляет роли, баны, сторону и свой слот, прочитанные с экрана. true — что-то изменилось.</summary>
+    private bool MergeText(DraftObservation o)
+    {
+        bool changed = false;
+        if (o.Roles is { } roles)
+        {
+            foreach (var (slot, pos) in roles)
+            {
+                if (_positions.TryGetValue(slot, out var old) && old == pos) continue;
+                _positions[slot] = pos;
+                changed = true;
+            }
+        }
+        if (o.BannedHeroes is { } bans)
+            foreach (var b in bans) changed |= _chatBans.Add(b);
+        if (o.AllySide is { } ally && _screenAllySide != ally) { _screenAllySide = ally; changed = true; }
+        if (o.OwnSlotIndex is { } own && _mySlot != own) { _mySlot = own; changed = true; }
+        return changed;
+    }
+
+    /// <summary>
+    /// Позиция для рекомендаций: в рейтинге — та, что подписана под вашим ником в этом драфте;
+    /// иначе — из профиля.
+    /// </summary>
+    private (Position Position, bool FromDraft) EffectivePosition(DraftState state)
+    {
+        if (state.MySide is { } side && state.MySlotIndex is { } slot &&
+            state.Positions.TryGetValue(new SlotId(side, SlotKind.Pick, slot), out var pos))
+            return (pos, true);
+        return (_profile().MyPosition, false);
+    }
+
     private void Publish(DraftState state, PipelineStatus status, string? message, SideSource sideSource,
                          double screenConfidence, bool force = false)
     {
         if (!force && _last is not null && _last.Status == status && _last.StatusMessage == message) return;
+
+        var (position, fromDraft) = EffectivePosition(state);
+        var profile = _profile();
+        if (profile.MyPosition != position)
+        {
+            profile = profile.Clone();
+            profile.MyPosition = position;
+        }
 
         IReadOnlyList<HeroRecommendation> recs = _last?.Recommendations ?? [];
         bool draftChanged = _last is null || !SameDraft(_last.State, state);
@@ -207,7 +270,7 @@ public sealed class DraftPipeline
             // Дельта считается относительно состояния ДО последнего изменения драфта,
             // а не относительно предыдущего пересчёта (иначе "82 → 94" исчезало бы сразу).
             if (draftChanged) _baselineScores = _currentScores;
-            var all = _recommendations.Recommend(state, _profile(), _patch, int.MaxValue, _baselineScores);
+            var all = _recommendations.Recommend(state, profile, _patch, int.MaxValue, _baselineScores);
             _currentScores = all.ToDictionary(r => r.Hero.Id, r => r.Score);
             recs = all.Take(_settings.Pipeline.RecommendationCount).ToList();
             _recommendationsDirty = false;
@@ -218,12 +281,17 @@ public sealed class DraftPipeline
             .ToDictionary(h => h.Id, h => _roles.Infer(h));
 
         bool ownPicked = FreshHint()?.OwnHeroId is not null;
-        _last = new DraftSnapshot(status, message, state, sideSource, recs, enemyRoles, _patch, screenConfidence, ownPicked);
+        _last = new DraftSnapshot(status, message, state, sideSource, recs, enemyRoles, _patch, screenConfidence, ownPicked,
+                                  position, fromDraft);
         SnapshotUpdated?.Invoke(this, _last);
     }
 
     private static bool SameDraft(DraftState a, DraftState b) =>
         a.MySide == b.MySide &&
         a.Phase == b.Phase &&
+        a.MySlotIndex == b.MySlotIndex &&
+        a.ExtraBans.SetEquals(b.ExtraBans) &&
+        a.Positions.Count == b.Positions.Count &&
+        a.Positions.All(kv => b.Positions.TryGetValue(kv.Key, out var v) && v == kv.Value) &&
         a.Slots.Select(s => (s.Id, s.Status, s.HeroId)).SequenceEqual(b.Slots.Select(s => (s.Id, s.Status, s.HeroId)));
 }

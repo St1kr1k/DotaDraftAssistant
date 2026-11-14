@@ -27,6 +27,7 @@ public sealed class DraftFrameAnalyzer
     private readonly Func<RecognitionOptions> _options;
     private readonly Dictionary<SlotId, (Mat Thumb, SlotObservation Obs, RecognitionResult? Rec)> _cache = new();
     private int _cacheRevision = -1;
+    private PlayerBarGrid? _cacheGrid;
 
     public DraftFrameAnalyzer(ILayoutProvider layout, IHeroRecognizer recognizer, SlotEmptinessClassifier emptiness, Func<RecognitionOptions> options)
     {
@@ -49,6 +50,45 @@ public sealed class DraftFrameAnalyzer
         return union.Intersect(new PixelRect(0, 0, clientWidth, clientHeight));
     }
 
+    /// <summary>
+    /// Автоматический режим: слоты берутся из сетки, найденной по цветным полоскам игроков.
+    /// Сам факт найденной сетки означает, что на экране драфт (на игровом HUD шаг слотов другой).
+    /// </summary>
+    public FrameAnalysis AnalyzeGrid(Mat region, PixelRect regionInClient, PlayerBarGrid grid, bool useCache = true)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_cacheGrid is null || !grid.SameAs(_cacheGrid))
+        {
+            ClearCache();
+            _cacheGrid = grid;
+            _cacheRevision = -2;
+        }
+
+        var slots = new List<SlotAnalysis>();
+        foreach (var side in new[] { DraftSide.Radiant, DraftSide.Dire })
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                var id = new SlotId(side, SlotKind.Pick, i);
+                var rect = grid.Portrait(side, i);
+                using var crop = CvImage.Crop(region, rect.Offset(-regionInClient.X, -regionInClient.Y));
+                slots.Add(crop is null
+                    ? new SlotAnalysis(id, rect, new SlotObservation(id, ObservedContent.Unknown, null, 0), null, false)
+                    : AnalyzeSlot(id, rect, crop, useCache));
+            }
+        }
+
+        double confidence = grid.DetectedBars / 10.0;
+        var observation = new DraftObservation(true, confidence, slots.Select(s => s.Observation).ToList(), ObservationIssue.None, now);
+        return new FrameAnalysis(observation, slots, confidence);
+    }
+
+    private void ClearCache()
+    {
+        foreach (var c in _cache.Values) c.Thumb.Dispose();
+        _cache.Clear();
+    }
+
     /// <param name="region">Захваченный фрагмент (BGR).</param>
     /// <param name="regionInClient">Где этот фрагмент находится в клиентской области.</param>
     public FrameAnalysis Analyze(Mat region, PixelRect regionInClient, int clientWidth, int clientHeight, bool useCache = true)
@@ -63,9 +103,9 @@ public sealed class DraftFrameAnalyzer
 
         if (_cacheRevision != _layout.Revision)
         {
-            foreach (var c in _cache.Values) c.Thumb.Dispose();
-            _cache.Clear();
+            ClearCache();
             _cacheRevision = _layout.Revision;
+            _cacheGrid = null;
         }
 
         var canvas = UiCanvas.Compute(clientWidth, clientHeight, layout.Anchor);

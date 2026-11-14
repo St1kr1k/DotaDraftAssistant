@@ -131,6 +131,15 @@ public sealed class JsonLayoutStore : ILayoutProvider, IDisposable
         return layout;
     }
 
+    /// <summary>Удалить ручную калибровку и вернуться к автоматическому поиску слотов.</summary>
+    public void ResetToAutomatic()
+    {
+        if (File.Exists(LayoutPath)) File.Delete(LayoutPath);
+        Reload();
+    }
+
+    public bool HasManualCalibration => File.Exists(LayoutPath) && Current.Calibrated;
+
     internal static IEnumerable<PixelRect> Interpolate(PixelRect first, PixelRect last, int count)
     {
         int w = (first.Width + last.Width) / 2, h = (first.Height + last.Height) / 2;

@@ -56,7 +56,7 @@
                         <RadioButton x:Name="NavHeroes" Style="{StaticResource NavButton}" GroupName="Nav" Content="Герои" Checked="OnNav" />
                         <RadioButton x:Name="NavPosition" Style="{StaticResource NavButton}" GroupName="Nav" Content="Позиция" Checked="OnNav" />
                         <RadioButton x:Name="NavOverlay" Style="{StaticResource NavButton}" GroupName="Nav" Content="Оверлей" Checked="OnNav" />
-                        <RadioButton x:Name="NavCalibration" Style="{StaticResource NavButton}" GroupName="Nav" Content="Калибровка" Checked="OnNav" />
+                        <RadioButton x:Name="NavSetup" Style="{StaticResource NavButton}" GroupName="Nav" Content="Настройка" Checked="OnNav" />
                     </StackPanel>
                 </DockPanel>
             </Border>

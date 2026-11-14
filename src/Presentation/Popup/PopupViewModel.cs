@@ -47,9 +47,11 @@ public sealed class PopupViewModel : ObservableObject
         Background = bg;
     }
 
-    public void Apply(DraftSnapshot s, Position position)
+    public void Apply(DraftSnapshot s)
     {
-        Header = $"ТОП-3 · POS {(int)position}";
+        Header = s.PositionFromDraft
+            ? $"ТОП-3 · POS {(int)s.EffectivePosition} · из драфта"
+            : $"ТОП-3 · POS {(int)s.EffectivePosition}";
         PhaseText = s.State.Phase switch
         {
             DraftPhase.PickPhase => $"пики · {s.State.ConfirmedPickCount}/{s.State.TotalPickSlots}",

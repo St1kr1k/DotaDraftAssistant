@@ -29,6 +29,9 @@ public sealed class PlayerProfile
     public Position? SecondaryPosition { get; set; }
     public Dictionary<int, HeroPreference> Preferences { get; set; } = new();
 
+    /// <summary>Ник в Dota — запасной способ найти свой слот на экране драфта, если GSI не настроен.</summary>
+    public string? Nickname { get; set; }
+
     public HeroPreference GetPreference(int heroId) =>
         Preferences.TryGetValue(heroId, out var p) ? p : HeroPreference.Neutral;
 
@@ -39,6 +42,7 @@ public sealed class PlayerProfile
     {
         MyPosition = MyPosition,
         SecondaryPosition = SecondaryPosition,
+        Nickname = Nickname,
         Preferences = new Dictionary<int, HeroPreference>(Preferences),
     };
 }

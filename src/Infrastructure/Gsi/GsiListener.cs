@@ -86,6 +86,12 @@ public sealed class GsiListener : IGameStateHintSource, IDisposable
         }
 
         DraftSide? team = null;
+        string? playerName = null;
+        if (root.TryGetProperty("player", out var pl) && pl.ValueKind == JsonValueKind.Object &&
+            pl.TryGetProperty("name", out var pn) && pn.ValueKind == JsonValueKind.String)
+        {
+            playerName = pn.GetString();
+        }
         if (root.TryGetProperty("player", out var player) && player.ValueKind == JsonValueKind.Object &&
             player.TryGetProperty("team_name", out var tn) && tn.ValueKind == JsonValueKind.String)
         {
@@ -105,7 +111,7 @@ public sealed class GsiListener : IGameStateHintSource, IDisposable
             heroId = id;
         }
 
-        return new GameStateHint(state, team, heroId, receivedAt);
+        return new GameStateHint(state, team, heroId, receivedAt, playerName);
     }
 
     public static ExternalGameState MapGameState(string? s) => s switch

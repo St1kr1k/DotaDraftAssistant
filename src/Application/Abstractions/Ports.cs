@@ -22,7 +22,20 @@ public sealed record DraftObservation(
     double ScreenConfidence,
     IReadOnlyList<SlotObservation> Slots,
     ObservationIssue Issue,
-    DateTimeOffset Timestamp);
+    DateTimeOffset Timestamp)
+{
+    /// <summary>Позиции, подписанные на экране (в рейтинге — только у своей команды).</summary>
+    public IReadOnlyDictionary<SlotId, Position>? Roles { get; init; }
+
+    /// <summary>Сторона, у которой видны подписи ролей, — это ваша команда.</summary>
+    public DraftSide? AllySide { get; init; }
+
+    /// <summary>Ваш слот в своей команде (по нику из GSI), если удалось определить.</summary>
+    public int? OwnSlotIndex { get; init; }
+
+    /// <summary>Герои, забаненные по сообщениям чата.</summary>
+    public IReadOnlyCollection<int>? BannedHeroes { get; init; }
+}
 
 /// <summary>
 /// Порт "глаз": захват + CV + распознавание. Возвращает null, если окно Dota 2 не найдено.
@@ -37,7 +50,7 @@ public interface IDraftDetector
 public enum ExternalGameState { Unknown, HeroSelection, PostDraft, InGame }
 
 /// <summary>Подсказка от официального Game State Integration (если настроен).</summary>
-public sealed record GameStateHint(ExternalGameState State, DraftSide? Team, int? OwnHeroId, DateTimeOffset ReceivedAt);
+public sealed record GameStateHint(ExternalGameState State, DraftSide? Team, int? OwnHeroId, DateTimeOffset ReceivedAt, string? PlayerName = null);
 
 public interface IGameStateHintSource
 {

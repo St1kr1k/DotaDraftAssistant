@@ -6,7 +6,7 @@ public partial class MainWindow : Window
 {
     private readonly Dictionary<object, FrameworkElement> _pages;
 
-    public MainWindow(MainViewModel vm, FrameworkElement heroes, FrameworkElement position, FrameworkElement overlay, FrameworkElement calibration)
+    public MainWindow(MainViewModel vm, FrameworkElement heroes, FrameworkElement position, FrameworkElement overlay, FrameworkElement setup)
     {
         InitializeComponent();
         DataContext = vm;
@@ -15,7 +15,7 @@ public partial class MainWindow : Window
             [NavHeroes] = heroes,
             [NavPosition] = position,
             [NavOverlay] = overlay,
-            [NavCalibration] = calibration,
+            [NavSetup] = setup,
         };
         NavHeroes.IsChecked = true;
         // В развёрнутом режиме окно без рамки заходит за края экрана на ширину рамки — компенсируем.
@@ -30,7 +30,7 @@ public partial class MainWindow : Window
         {
             "position" => NavPosition,
             "overlay" => NavOverlay,
-            "calibration" => NavCalibration,
+            "setup" => NavSetup,
             _ => NavHeroes,
         };
         target.IsChecked = true;

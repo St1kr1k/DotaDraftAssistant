@@ -67,6 +67,8 @@ public sealed class RecognitionOptions
     public double EmptySlotMaxStdDev { get; set; } = 12;
     /// <summary>Порог совпадения сигнатуры экрана драфта.</summary>
     public double SignatureThreshold { get; set; } = 0.75;
+    /// <summary>Сохранять пару кадров каждого драфта локально (для разбора ошибок распознавания).</summary>
+    public bool SaveDebugFrames { get; set; } = true;
     /// <summary>Средняя разница миниатюр, ниже которой слот считается неизменившимся (результат берётся из кэша).</summary>
     public double UnchangedSlotThreshold { get; set; } = 3.0;
 }

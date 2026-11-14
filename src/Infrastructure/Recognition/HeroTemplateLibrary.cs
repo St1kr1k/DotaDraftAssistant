@@ -73,10 +73,17 @@ public sealed class HeroTemplateLibrary : IDisposable
             {
                 foreach (var src in mats)
                 {
-                    using var cropped = CvImage.CenterCropToAspect(src, aspect);
-                    using var resized = CvImage.Resize(cropped, workSize);
-                    using var inner = CvImage.InnerCrop(resized, innerMargin);
-                    list.Add(new PreparedTemplate(heroId, CvImage.ToGray(resized), CvImage.HueSatHistogram(inner)));
+                    // Если слот шире портрета, неизвестно, какую полосу арта показывает Dota, —
+                    // готовим несколько вертикальных вариантов; совпадение берётся по лучшему.
+                    bool widerThanSource = aspect > (double)src.Width / src.Height + 0.05;
+                    double[] anchors = widerThanSource ? [0.15, 0.35, 0.5] : [0.5];
+                    foreach (var anchor in anchors)
+                    {
+                        using var cropped = CvImage.CropToAspect(src, aspect, anchor);
+                        using var resized = CvImage.Resize(cropped, workSize);
+                        using var inner = CvImage.InnerCrop(resized, innerMargin);
+                        list.Add(new PreparedTemplate(heroId, CvImage.ToGray(resized), CvImage.HueSatHistogram(inner)));
+                    }
                 }
             }
             _prepared[key] = list;

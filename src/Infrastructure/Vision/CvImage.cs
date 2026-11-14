@@ -38,7 +38,26 @@ public static class CvImage
     }
 
     /// <summary>Центральный кроп под заданные пропорции (для портретов другого aspect ratio).</summary>
-    public static Mat CenterCropToAspect(Mat image, double aspect)
+    public static Mat CenterCropToAspect(Mat image, double aspect) => CropToAspect(image, aspect, 0.5);
+
+    /// <summary>
+    /// Кроп под пропорции с выбором, какую часть оставить по вертикали: 0 — верх, 0.5 — центр, 1 — низ.
+    /// Карточки в верхней панели драфта шире портретов, и Dota показывает не обязательно середину арта.
+    /// </summary>
+    public static Mat CropToAspect(Mat image, double aspect, double verticalAnchor)
+    {
+        double current = (double)image.Width / image.Height;
+        if (current < aspect)
+        {
+            int h = (int)Math.Round(image.Width / aspect);
+            int y = (int)Math.Round((image.Height - h) * Math.Clamp(verticalAnchor, 0, 1));
+            using var v = new Mat(image, new Rect(0, y, image.Width, h));
+            return v.Clone();
+        }
+        return CenterCropToAspectCore(image, aspect);
+    }
+
+    private static Mat CenterCropToAspectCore(Mat image, double aspect)
     {
         double current = (double)image.Width / image.Height;
         Rect r;

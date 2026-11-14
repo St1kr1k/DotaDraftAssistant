@@ -90,7 +90,13 @@ public partial class App : System.Windows.Application
         var recognizer = new CompositeHeroRecognizer(
             new TemplateHeroRecognizer(_templates, rec), new ColorHistogramHeroRecognizer(_templates, rec), rec);
         var analyzer = new DraftFrameAnalyzer(_layout, recognizer, new SlotEmptinessClassifier(rec), rec);
-        var detector = new VisualDraftDetector(_capture, analyzer);
+        var textReader = new DraftTextReader(heroes, _log);
+        var debugDir = Path.Combine(userDir, "debug");
+        var detector = new VisualDraftDetector(
+            _capture, analyzer, textReader,
+            playerName: () => _gsi?.Current?.PlayerName ?? _profile.Current.Nickname,
+            debugDirectory: debugDir,
+            saveDebugFrames: () => _settings.Current.Recognition.SaveDebugFrames);
 
         if (_settings.Current.Gsi.Enabled)
         {
@@ -148,7 +154,7 @@ public partial class App : System.Windows.Application
             new HeroesPage(new HeroesViewModel(heroes, _profile, roles, patch, images)),
             new PositionPage(new PositionViewModel(_profile, heroes, roles)),
             new OverlayPage(overlayVm),
-            new CalibrationPage(_layout, OpenCalibration));
+            new SetupPage(detector, _layout, _gsi, _settings, _profile, debugDir, OpenCalibration));
         _main.Closed += (_, _) => Shutdown();
         _main.RestartToUpdateRequested += (_, _) => _updater.RestartAndApply();
         _main.Show();
@@ -175,15 +181,15 @@ public partial class App : System.Windows.Application
         });
         _ = Task.Run(() => _updater.RunAsync(_cts.Token));
 
-        // Первый запуск без калибровки — сразу показываем, что нужно сделать.
-        if (!_layout.Current.Calibrated) _main.ShowPage("calibration");
+        // GSI ещё не настроен — сразу показываем раздел, где это делается в один клик.
+        if (!GsiInstaller.Status().ConfigInstalled) _main.ShowPage("setup");
     }
 
     private void OnSnapshot(DraftSnapshot s)
     {
         _lastSnapshot = s;
         _mainVm.Apply(s);
-        _popupVm.Apply(s, _profile.Current.MyPosition);
+        _popupVm.Apply(s);
         UpdatePopupVisibility();
     }
 

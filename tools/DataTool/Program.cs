@@ -13,7 +13,7 @@ namespace DraftAssistant.DataTool;
 
 /// <summary>
 ///   DataTool fetch        [--out data] [--api-key KEY] [--no-matchups] [--delay-ms 1100]
-///   DataTool check-layout --screenshot shot.png [--data data] [--user-dir DIR] [--out debug]
+///   DataTool check-layout --screenshot shot.png [--data data] [--user-dir DIR] [--out debug] [--player НИК]
 ///   DataTool add-template --screenshot shot.png --slot Radiant-Pick-1 --hero "Axe" [--data data] [--user-dir DIR]
 /// </summary>
 internal static class Program
@@ -264,20 +264,48 @@ internal static class Program
         var outDir = Path.GetFullPath(Opt(o, "out", "debug"));
         Directory.CreateDirectory(outDir);
         var tk = BuildToolkit(o);
-        if (!tk.Analyzer.IsCalibrated)
-        {
-            Console.WriteLine($"Разметка не откалибрована ({tk.Layout.LayoutPath}). Откалибруйте в приложении.");
-            return 1;
-        }
 
         using var img = Cv2.ImRead(shot, ImreadModes.Color);
         if (img.Empty()) throw new ArgumentException($"не удалось открыть {shot}");
         Console.WriteLine($"Скриншот {img.Width}x{img.Height}, шаблонов героев: {tk.Templates.HeroCount}");
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var analysis = tk.Analyzer.Analyze(img, new PixelRect(0, 0, img.Width, img.Height), img.Width, img.Height, useCache: false);
+        FrameAnalysis analysis;
+        if (tk.Analyzer.IsCalibrated)
+        {
+            Console.WriteLine($"Режим: ручная калибровка ({tk.Layout.LayoutPath})");
+            analysis = tk.Analyzer.Analyze(img, new PixelRect(0, 0, img.Width, img.Height), img.Width, img.Height, useCache: false);
+        }
+        else
+        {
+            using var top = new Mat(img, new Rect(0, 0, img.Width, (int)(img.Height * PlayerBarGridDetector.SearchHeight)));
+            var grid = PlayerBarGridDetector.Detect(top, img.Width);
+            if (grid is null)
+            {
+                Console.WriteLine("Режим: автоматический — сетка слотов НЕ найдена (это не экран драфта или интерфейс отличается).");
+                return 1;
+            }
+            Console.WriteLine($"Режим: автоматический — сетка найдена: полоски на y={grid.BarY}, шаг {grid.Pitch:0.0}px, найдено полосок {grid.DetectedBars}/10");
+            analysis = tk.Analyzer.AnalyzeGrid(img, new PixelRect(0, 0, img.Width, img.Height), grid, useCache: false);
+
+            var reader = new DraftTextReader(tk.Heroes, new ConsoleLog());
+            if (reader.Available)
+            {
+                using var chat = CvImage.Crop(img, DraftTextReader.ChatRect(img.Width, img.Height));
+                var text = reader.Read(img, grid, chat, o.GetValueOrDefault("player"));
+                Console.WriteLine($"Ваша сторона (по подписям ролей): {text.AllySide?.ToString() ?? "не определена"}");
+                foreach (var (slot, pos) in text.Roles.OrderBy(r => r.Key.Index))
+                    Console.WriteLine($"  роль {slot}: pos {(int)pos}");
+                if (text.OwnSlotIndex is { } own) Console.WriteLine($"Ваш слот: {own + 1}");
+                Console.WriteLine($"Баны из чата: {string.Join(", ", text.BannedHeroes.Select(id => tk.Heroes.Find(id)?.LocalizedName))}");
+            }
+            else
+            {
+                Console.WriteLine("OCR Windows недоступен — роли и баны не читаются.");
+            }
+        }
         sw.Stop();
-        Console.WriteLine($"Экран драфта: {(analysis.Observation.DraftScreenVisible ? "ДА" : "нет")} (signature score {analysis.SignatureScore:0.00}); анализ {sw.ElapsedMilliseconds} мс");
+        Console.WriteLine($"Экран драфта: {(analysis.Observation.DraftScreenVisible ? "ДА" : "нет")} (score {analysis.SignatureScore:0.00}); анализ {sw.ElapsedMilliseconds} мс");
 
         using var annotated = img.Clone();
         foreach (var s in analysis.Slots)
@@ -314,6 +342,13 @@ internal static class Program
         return 0;
     }
 
+    private sealed class ConsoleLog : DraftAssistant.Application.Abstractions.IAppLog
+    {
+        public void Info(string message) => Console.WriteLine(message);
+        public void Warn(string message) => Console.WriteLine($"WARN {message}");
+        public void Error(string message, Exception? ex = null) => Console.WriteLine($"ERROR {message} {ex?.Message}");
+    }
+
     // ------------------------------------------------------------------ add-template
 
     private static int AddTemplate(Dictionary<string, string> o)
@@ -330,13 +365,27 @@ internal static class Program
 
         using var img = Cv2.ImRead(shot, ImreadModes.Color);
         if (img.Empty()) throw new ArgumentException($"не удалось открыть {shot}");
-        var layout = tk.Layout.Current;
-        var canvas = UiCanvas.Compute(img.Width, img.Height, layout.Anchor);
-        var slot = layout.AllSlots().FirstOrDefault(s => string.Equals(s.Id.ToString(), slotName, StringComparison.OrdinalIgnoreCase));
-        if (slot.Rect is null) throw new ArgumentException($"слот '{slotName}' не размечен");
+        PixelRect rect;
+        if (tk.Analyzer.IsCalibrated)
+        {
+            var layout = tk.Layout.Current;
+            var canvas = UiCanvas.Compute(img.Width, img.Height, layout.Anchor);
+            var slot = layout.AllSlots().FirstOrDefault(s => string.Equals(s.Id.ToString(), slotName, StringComparison.OrdinalIgnoreCase));
+            if (slot.Rect is null) throw new ArgumentException($"слот '{slotName}' не размечен");
+            rect = UiCanvas.ToPixels(slot.Rect, canvas);
+        }
+        else
+        {
+            using var top = new Mat(img, new Rect(0, 0, img.Width, (int)(img.Height * PlayerBarGridDetector.SearchHeight)));
+            var grid = PlayerBarGridDetector.Detect(top, img.Width) ?? throw new InvalidOperationException("сетка слотов не найдена на скриншоте");
+            var id = DraftLayout.StandardSlots.Cast<DraftAssistant.Domain.Draft.SlotId?>()
+                .FirstOrDefault(s => string.Equals(s.ToString(), slotName, StringComparison.OrdinalIgnoreCase));
+            if (id is not { Kind: DraftAssistant.Domain.Draft.SlotKind.Pick } sid)
+                throw new ArgumentException($"слот '{slotName}' не найден (пример: Radiant-Pick-1)");
+            rect = grid.Portrait(sid.Side, sid.Index);
+        }
 
-        using var crop = CvImage.Crop(img, UiCanvas.ToPixels(slot.Rect, canvas))
-                         ?? throw new InvalidOperationException("слот вне изображения");
+        using var crop = CvImage.Crop(img, rect) ?? throw new InvalidOperationException("слот вне изображения");
         var dir = Path.Combine(DataFiles.HeroesDir(tk.DataDir), hero.Id.ToString(), "templates");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, $"{DateTime.Now:yyyyMMdd_HHmmss}_{slotName}.png");

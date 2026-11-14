@@ -1,3 +1,5 @@
+using DraftAssistant.Domain.Player;
+
 namespace DraftAssistant.Domain.Draft;
 
 public enum DraftSide { Radiant, Dire }
@@ -48,6 +50,15 @@ public sealed record DraftState(
     DraftSide? MySide,
     DateTimeOffset Timestamp)
 {
+    /// <summary>Позиции игроков, прочитанные с экрана (в рейтинге — у своей команды).</summary>
+    public IReadOnlyDictionary<SlotId, Position> Positions { get; init; } = new Dictionary<SlotId, Position>();
+
+    /// <summary>Баны, известные не из слотов, а из чата («Запрещён герой: …»).</summary>
+    public IReadOnlySet<int> ExtraBans { get; init; } = new HashSet<int>();
+
+    /// <summary>Ваш слот в своей команде, если его удалось определить.</summary>
+    public int? MySlotIndex { get; init; }
+
     public static DraftState Initial(IEnumerable<SlotId> slots) =>
         new(DraftPhase.Idle, slots.Select(SlotState.Empty).ToList(), null, DateTimeOffset.UtcNow);
 
@@ -69,6 +80,7 @@ public sealed record DraftState(
     public IReadOnlySet<int> UnavailableHeroes =>
         Slots.Where(s => s.Status == SlotStatus.Confirmed && s.HeroId.HasValue)
              .Select(s => s.HeroId!.Value)
+             .Concat(ExtraBans)
              .ToHashSet();
 
     public int ConfirmedPickCount =>
