@@ -23,7 +23,8 @@ public sealed record PlayerBarGrid(
     // Смещения по вертикали от линии полосок, в долях шага (сняты со скриншота драфта).
     // Портрет — между верхней полоской (у выбравших героя) и нижней (у пустых слотов).
     public const double PortraitTop = -0.49;
-    public const double PortraitBottom = -0.04;
+    // Низ портрета не берём: в рейтинге там подпись ранга игрока («Страж III»), она мешает распознаванию.
+    public const double PortraitBottom = -0.12;
     /// <summary>Слоты — параллелограммы: верх смещён к центру экрана примерно на 0.0725 шага.</summary>
     public const double Skew = 0.0725;
     public const double NameTop = 0.10;

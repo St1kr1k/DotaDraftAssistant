@@ -45,6 +45,10 @@ public sealed class StateMachineOptions
 
 public sealed class RecognitionOptions
 {
+    /// <summary>Версия порогов распознавания: сохранённые пороги старой версии заменяются новыми.</summary>
+    public const int CurrentVersion = 2;
+    public int Version { get; set; }
+
     /// <summary>Ширина рабочего изображения слота; высота считается из пропорций слота.</summary>
     public int WorkWidth { get; set; } = 64;
     /// <summary>Во сколько раз арт героя в верхней панели драфта крупнее портрета из данных.</summary>
@@ -58,12 +62,12 @@ public sealed class RecognitionOptions
     public double InnerMargin { get; set; } = 0.1;
     /// <summary>
     /// Ниже этого итогового score герой не считается распознанным.
-    /// Подобрано на прототипе (tools/prototype): у "чужих" изображений лучший score ≤ 0.63,
-    /// у героев ≥ 0.84. На реальных кадрах проверяется через DataTool check-layout.
+    /// Подобрано на кадрах реальных драфтов (2560×1440, с подписями рангов и без):
+    /// у героев 0.68–0.94, у пустых слотов ≤ 0.50.
     /// </summary>
-    public double MinScore { get; set; } = 0.60;
+    public double MinScore { get; set; } = 0.58;
     /// <summary>Score, при котором составляющая уверенности по абсолютному значению = 1.</summary>
-    public double StrongScore { get; set; } = 0.85;
+    public double StrongScore { get; set; } = 0.8;
     /// <summary>Отрыв лучшего кандидата от второго, при котором составляющая уверенности по отрыву = 1.</summary>
     public double GoodMargin { get; set; } = 0.15;
     public double TemplateWeight { get; set; } = 0.75;

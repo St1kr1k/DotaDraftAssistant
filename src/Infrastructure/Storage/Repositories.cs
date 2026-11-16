@@ -296,15 +296,24 @@ public sealed class JsonSettingsRepository(string userDirectory) : ISettingsRepo
         {
             // Настройки оценки из старой версии приложения заменяются новыми значениями по умолчанию,
             // иначе исправления весов не дошли бы до тех, у кого settings.json уже создан.
+            bool changed = false;
             if (s.Scoring.Version < ScoringOptions.CurrentVersion)
             {
                 s.Scoring = new ScoringOptions { Version = ScoringOptions.CurrentVersion };
-                SaveSettings(s);
+                changed = true;
             }
+            if (s.Recognition.Version < RecognitionOptions.CurrentVersion)
+            {
+                bool debug = s.Recognition.SaveDebugFrames;
+                s.Recognition = new RecognitionOptions { Version = RecognitionOptions.CurrentVersion, SaveDebugFrames = debug };
+                changed = true;
+            }
+            if (changed) SaveSettings(s);
             return s;
         }
         s = new AppSettings();
         s.Scoring.Version = ScoringOptions.CurrentVersion;
+        s.Recognition.Version = RecognitionOptions.CurrentVersion;
         SaveSettings(s); // создаём файл с дефолтами, чтобы веса можно было править руками
         return s;
     }
