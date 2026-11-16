@@ -220,7 +220,9 @@ internal static class StratzFetcher
             {
                 foreach (var r in (data?["heroStats"]?[$"s{hero}_{pos}"] as JsonArray ?? []).OfType<JsonObject>())
                 {
-                    if (r["wasGiven"]?.GetValue<bool>() == true || Int(r["matchCount"]) <= 0) continue;
+                    // Флаг wasGiven у STRATZ стоит и на повторных копиях (2-я, 3-я Iron Branch), поэтому строки
+                    // не отбрасываются: копии одного предмета складываются при загрузке.
+                    if (Int(r["matchCount"]) <= 0) continue;
                     result.Add(new StartItemDto
                     {
                         HeroId = hero, Position = pos, ItemId = Int(r["itemId"]), Instance = Int(r["instance"]),

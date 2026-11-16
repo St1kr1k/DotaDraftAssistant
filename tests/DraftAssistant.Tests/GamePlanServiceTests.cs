@@ -102,3 +102,39 @@ public class StartItemsTests
         Assert.True(built.Sum(i => items[i.ItemId].Cost * i.Count) <= 600);
     }
 }
+
+public class StartItemsCopiesTests
+{
+    [Fact]
+    public void Repeated_copies_from_separate_rows_are_counted()
+    {
+        var items = new Dictionary<int, DraftAssistant.Infrastructure.Storage.ItemDto>
+        {
+            [44] = new() { Id = 44, Name = "Tango", Cost = 90 },
+            [16] = new() { Id = 16, Name = "Iron Branch", Cost = 55 },
+            [20] = new() { Id = 20, Name = "Circlet", Cost = 155 },
+            [13] = new() { Id = 13, Name = "Mantle of Intelligence", Cost = 140 },
+            [237] = new() { Id = 237, Name = "Faerie Fire", Cost = 65 },
+        };
+        DraftAssistant.Infrastructure.Storage.StartItemDto R(int item, int inst, int games) =>
+            new() { HeroId = 76, Position = 2, ItemId = item, Instance = inst, Games = games, PositionGames = 58879 };
+        // Как в данных STRATZ для OD: 2-я ветка — две строки (с флагом wasGiven и без), 3-я — 29%.
+        var rows = new List<DraftAssistant.Infrastructure.Storage.StartItemDto>
+        {
+            R(44, 0, 69215), R(16, 0, 62006), R(20, 0, 58657), R(13, 0, 50013), R(16, 1, 44771), R(16, 1, 6594),
+            R(237, 0, 24686), R(16, 2, 17352),
+        };
+        var merged = rows.GroupBy(r => (r.HeroId, r.Position, r.ItemId, r.Instance))
+            .Select(g => new DraftAssistant.Infrastructure.Storage.StartItemDto
+            {
+                HeroId = g.Key.HeroId, Position = g.Key.Position, ItemId = g.Key.ItemId, Instance = g.Key.Instance,
+                Games = g.Sum(r => r.Games), PositionGames = g.Max(r => r.PositionGames),
+            }).ToList();
+
+        var built = DraftAssistant.Infrastructure.Storage.LocalPatchDataProvider.BuildStartItems(merged, items)[(76, Position.Mid)];
+
+        Assert.Equal(2, built.Single(i => i.Name == "Iron Branch").Count);
+        Assert.Contains(built, i => i.Name == "Mantle of Intelligence");
+        Assert.Contains(built, i => i.Name == "Faerie Fire");
+    }
+}

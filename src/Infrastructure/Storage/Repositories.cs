@@ -81,9 +81,20 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             var lanes = ReadAll<LaneDto>(dir, S("lanes"));
             // Стартовую закупку берём у сильных игроков (Легенда–Титан), а не по рангу пользователя:
             // цель — научиться правильному старту, а не повторять типичный для своего ранга.
-            var startItems = ReadAll<StartItemDto>(dir, "stratz_startitems_LEGEND_ANCIENT.json", "stratz_startitems_DIVINE_IMMORTAL.json");
-            if (startItems.Count == 0) startItems = ReadAll<StartItemDto>(dir, S("startitems"));
-            startItems = startItems.GroupBy(r => (r.HeroId, r.Position, r.ItemId, r.Instance))
+            var startFiles = new[] { "stratz_startitems_LEGEND_ANCIENT.json", "stratz_startitems_DIVINE_IMMORTAL.json" }
+                .Where(f => File.Exists(Path.Combine(dir, f))).ToList();
+            if (startFiles.Count == 0) startFiles = [S("startitems")];
+            // Внутри одного файла одна и та же копия предмета может быть в нескольких строках (с флагом wasGiven и без):
+            // игры складываются, а число игр героя на позиции — нет. Между файлами (рангами) складывается и то и другое.
+            var startItems = startFiles
+                .SelectMany(f => ReadAll<StartItemDto>(dir, f)
+                    .GroupBy(r => (r.HeroId, r.Position, r.ItemId, r.Instance))
+                    .Select(g => new StartItemDto
+                    {
+                        HeroId = g.Key.HeroId, Position = g.Key.Position, ItemId = g.Key.ItemId, Instance = g.Key.Instance,
+                        Games = g.Sum(r => r.Games), PositionGames = g.Max(r => r.PositionGames),
+                    }))
+                .GroupBy(r => (r.HeroId, r.Position, r.ItemId, r.Instance))
                 .Select(g => new StartItemDto
                 {
                     HeroId = g.Key.HeroId, Position = g.Key.Position, ItemId = g.Key.ItemId, Instance = g.Key.Instance,
