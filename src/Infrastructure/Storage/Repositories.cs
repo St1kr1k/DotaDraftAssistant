@@ -36,10 +36,22 @@ public sealed class JsonHeroRepository : IHeroRepository
         if (!File.Exists(path))
             throw new FileNotFoundException("Нет данных героев. Запустите: DataTool fetch", path);
         var dtos = JsonSerializer.Deserialize<List<HeroDto>>(File.ReadAllText(path), DataFiles.Json) ?? [];
-        return FromHeroes(dtos.Select(d => new Hero(d.Id, d.Name, d.LocalizedName, d.PrimaryAttribute, d.AttackType, d.Roles, d.Aliases)));
+        return FromHeroes(dtos.Select(d =>
+        {
+            // Имя как в клиенте Dota; старое имя из базы остаётся псевдонимом (для поиска и банов из чата).
+            var name = RenamedHeroes.GetValueOrDefault(d.LocalizedName, d.LocalizedName);
+            var aliases = name == d.LocalizedName ? d.Aliases : [.. d.Aliases, d.LocalizedName];
+            return new Hero(d.Id, d.Name, name, d.PrimaryAttribute, d.AttackType, d.Roles, aliases);
+        }));
     }
 
     public static JsonHeroRepository FromHeroes(IEnumerable<Hero> heroes) => new(heroes.ToList());
+
+    /// <summary>Герои, которых Valve переименовала, а в открытой базе осталось старое имя.</summary>
+    private static readonly Dictionary<string, string> RenamedHeroes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Outworld Devourer"] = "Outworld Destroyer",
+    };
 }
 
 /// <summary>
