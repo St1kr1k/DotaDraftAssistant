@@ -264,7 +264,7 @@ public partial class App : System.Windows.Application
         }
 
         var c = window.ClientRect;
-        int height = (int)Math.Ceiling(grid.BarY + 2);
+        int height = grid.BarY + 2;
         NativeWindow.Place(_predictionWindow, c.X, c.Y, c.Width, height);
         if (!_predictionWindow.IsVisible) _predictionWindow.Show();
 
