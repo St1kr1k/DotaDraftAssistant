@@ -35,6 +35,18 @@ public sealed record DraftObservation(
 
     /// <summary>Герои, забаненные по сообщениям чата.</summary>
     public IReadOnlyCollection<int>? BannedHeroes { get; init; }
+
+    /// <summary>Ники игроков под слотами (как прочитаны с экрана, могут быть обрезаны «…»).</summary>
+    public IReadOnlyDictionary<SlotId, string>? PlayerNames { get; init; }
+}
+
+/// <summary>Самые частые герои игрока по его открытым матчам.</summary>
+public sealed record PlayerHeroes(long AccountId, string PersonaName, IReadOnlyList<(int HeroId, int Games)> Heroes, int TotalGames);
+
+/// <summary>Открытая статистика игроков по нику (OpenDota). null — не найден или профиль скрыт.</summary>
+public interface IPlayerHeroSource
+{
+    Task<PlayerHeroes?> FindAsync(string nickname, CancellationToken ct);
 }
 
 /// <summary>

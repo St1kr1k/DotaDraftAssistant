@@ -4,6 +4,9 @@ using System.Windows.Threading;
 using DraftAssistant.Application.Abstractions;
 using DraftAssistant.Application.Configuration;
 using DraftAssistant.Application.Pipeline;
+using DraftAssistant.Presentation.Predictions;
+using DraftAssistant.Infrastructure.Players;
+using DraftAssistant.Application.Prediction;
 using DraftAssistant.Application.Plan;
 using DraftAssistant.Application.Recommendation;
 using DraftAssistant.Application.Recommendation.Evaluators;
@@ -50,6 +53,11 @@ public partial class App : System.Windows.Application
     private bool _userHidden;
     /// <summary>План на игру после вашего пика и до какого момента его показывать после конца драфта.</summary>
     private GamePlan? _plan;
+    private VisualDraftDetector _detector = null!;
+    private EnemyPredictionService _predictions = null!;
+    private EnemyPredictionWindow _predictionWindow = null!;
+    private HeroImages _images = null!;
+    private IReadOnlyDictionary<int, string> _heroNames = new Dictionary<int, string>();
     private DateTimeOffset? _planUntil;
     private string? _steamName;
 
@@ -137,6 +145,10 @@ public partial class App : System.Windows.Application
             new PlayerPreferenceEvaluator(scoring),
         ];
         var recommendations = new RecommendationService(heroes, evaluators, scoring, roles);
+        _detector = detector;
+        _heroNames = heroes.All.ToDictionary(h => h.Id, h => h.LocalizedName);
+        _predictions = new EnemyPredictionService(new OpenDotaPlayerSource(), _log);
+        _predictions.Updated += () => Dispatcher.InvokeAsync(UpdatePredictions);
         _pipeline = new DraftPipeline(detector, _gsi, recommendations, roles, heroes, patchProvider,
                                       () => _profile.Current, _settings.Current, _log, new GamePlanService(roles));
         _profile.Changed += (_, _) => _pipeline.InvalidateRecommendations();
@@ -144,6 +156,9 @@ public partial class App : System.Windows.Application
         // --- Presentation ---
         var images = new HeroImages(DataFiles.HeroesDir(dataDir));
 
+        _images = images;
+        _predictionWindow = new EnemyPredictionWindow();
+        NativeWindow.Handle(_predictionWindow);
         _popupVm = new PopupViewModel(images);
         _popupVm.ApplySettings(_settings.Current.Overlay);
         _popup = new PopupWindow(_popupVm);
@@ -180,7 +195,7 @@ public partial class App : System.Windows.Application
         _pipeline.SnapshotUpdated += (_, snapshot) => Dispatcher.InvokeAsync(() => OnSnapshot(snapshot));
 
         _positionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _positionTimer.Tick += (_, _) => { UpdatePopupVisibility(); PositionPopup(); };
+        _positionTimer.Tick += (_, _) => { UpdatePopupVisibility(); PositionPopup(); UpdatePredictions(); };
         _positionTimer.Start();
 
         _ = Task.Run(() => _pipeline.RunAsync(_cts.Token));
@@ -221,6 +236,53 @@ public partial class App : System.Windows.Application
         _popupVm.ShowPlan(PlanVisible() ? _plan : null);
         _popupVm.Apply(s);
         UpdatePopupVisibility();
+        UpdatePredictions();
+    }
+
+    /// <summary>
+    /// Догадки о пиках соперников поверх их пустых слотов (если включено в настройках окошка).
+    /// Иконка слота исчезает, как только соперник выбрал героя.
+    /// </summary>
+    private void UpdatePredictions()
+    {
+        var s = _lastSnapshot;
+        bool inDraft = s?.State.Phase is DraftPhase.DraftDetected or DraftPhase.BanPhase or DraftPhase.PickPhase;
+        var window = _capture.FindGameWindow();
+        if (!_settings.Current.Overlay.ShowEnemyPredictions || _userHidden || s is null || !inDraft ||
+            s.Status != PipelineStatus.Observing || _detector.CurrentGrid is not { } grid ||
+            window is null || window.IsMinimized)
+        {
+            if (_predictionWindow.IsVisible) _predictionWindow.Hide();
+            return;
+        }
+
+        var predictions = _predictions.Predict(s);
+        if (predictions.Count == 0)
+        {
+            if (_predictionWindow.IsVisible) _predictionWindow.Hide();
+            return;
+        }
+
+        var c = window.ClientRect;
+        int height = (int)Math.Ceiling(grid.BarY + 2);
+        NativeWindow.Place(_predictionWindow, c.X, c.Y, c.Width, height);
+        if (!_predictionWindow.IsVisible) _predictionWindow.Show();
+
+        double k = _predictionWindow.PixelsToDip;
+        double skewDeg = Math.Atan(PlayerBarGrid.Skew / PlayerBarGridDetector.TopToBottomBars) * 180 / Math.PI;
+        _predictionWindow.Tiles.Clear();
+        foreach (var p in predictions)
+        {
+            bool radiant = p.Slot.Side == DraftSide.Radiant;
+            double shift = PlayerBarGrid.Skew / 2 * grid.Pitch * (radiant ? -1 : 1);
+            double w = grid.BarWidth, h = 0.48 * grid.Pitch;
+            double left = grid.Center(p.Slot.Side, p.Slot.Index) - w / 2 + shift;
+            double top = grid.BarY - 0.50 * grid.Pitch;
+            string hero = _heroNames.GetValueOrDefault(p.HeroId, "?");
+            _predictionWindow.Tiles.Add(new PredictionTile(
+                left * k, top * k, w * k, h * k, radiant ? skewDeg : -skewDeg,
+                _images.Portrait(p.HeroId, 256), $"вероятно {hero} · {p.Share:P0}", Math.Max(9, 0.075 * grid.Pitch * k)));
+        }
     }
 
     /// <summary>План виден после вашего пика до конца драфта и ещё PlanLingerSeconds после него.</summary>

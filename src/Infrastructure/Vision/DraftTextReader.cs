@@ -17,7 +17,11 @@ public sealed record DraftTextInfo(
     IReadOnlyDictionary<SlotId, Position> Roles,
     DraftSide? AllySide,
     int? OwnSlotIndex,
-    IReadOnlyCollection<int> BannedHeroes);
+    IReadOnlyCollection<int> BannedHeroes)
+{
+    /// <summary>Ники игроков по слотам (обеих команд).</summary>
+    public IReadOnlyDictionary<SlotId, string> Names { get; init; } = new Dictionary<SlotId, string>();
+}
 
 /// <summary>
 /// Чтение текста встроенным распознаванием Windows (Windows.Media.Ocr):
@@ -68,6 +72,7 @@ public sealed class DraftTextReader
     public DraftTextInfo Read(Mat top, PlayerBarGrid grid, Mat? chat, string? playerName)
     {
         var roles = new Dictionary<SlotId, Position>();
+        var names = new Dictionary<SlotId, string>();
         DraftSide? allySide = null;
         int? ownSlot = null;
 
@@ -96,21 +101,27 @@ public sealed class DraftTextReader
             if (allySide is { } ally)
                 foreach (var k in roles.Keys.Where(k => k.Side != ally).ToList()) roles.Remove(k);
 
+            // Ники обеих команд: свой ник даёт ваш слот (и сторону, если подписей ролей нет),
+            // ники соперников — для подсказки «кого он, вероятно, возьмёт».
+            foreach (var s in new[] { DraftSide.Radiant, DraftSide.Dire })
+            {
+                var band = grid.TeamBand(s, PlayerBarGrid.NameTop, PlayerBarGrid.NameBottom);
+                var words = Recognize(_localized, top, band);
+                var centers = Enumerable.Range(0, 5).Select(i => grid.Center(s, i)).ToList();
+                foreach (var (index, text) in DraftTextParsing.AssignToSlots(words, centers, maxGap: grid.Pitch * 0.08))
+                {
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    names[new SlotId(s, SlotKind.Pick, index)] = text.Trim();
+                }
+            }
             if (!string.IsNullOrWhiteSpace(playerName))
             {
-                // Ник ищем на стороне с подписями ролей, а если их не нашлось — на обеих:
+                // Свой ник ищем на стороне с подписями ролей, а если их не нашлось — на обеих:
                 // сторона, где нашёлся ваш ник, и есть ваша команда (обычный пик, без подписей ролей).
-                var sides = allySide is { } known ? new[] { known } : new[] { DraftSide.Radiant, DraftSide.Dire };
-                foreach (var s in sides)
+                foreach (var (slot, text) in names.OrderBy(kv => allySide is { } k && kv.Key.Side == k ? 0 : 1))
                 {
-                    var band = grid.TeamBand(s, PlayerBarGrid.NameTop, PlayerBarGrid.NameBottom);
-                    var words = Recognize(_localized, top, band);
-                    var centers = Enumerable.Range(0, 5).Select(i => grid.Center(s, i)).ToList();
-                    foreach (var (index, text) in DraftTextParsing.AssignToSlots(words, centers, maxGap: grid.Pitch * 0.08))
-                    {
-                        if (DraftTextParsing.NameMatches(text, playerName)) { ownSlot = index; allySide ??= s; break; }
-                    }
-                    if (ownSlot is not null) break;
+                    if (allySide is { } known && slot.Side != known) continue;
+                    if (DraftTextParsing.NameMatches(text, playerName)) { ownSlot = slot.Index; allySide ??= slot.Side; break; }
                 }
             }
         }
@@ -124,7 +135,7 @@ public sealed class DraftTextReader
             }
         }
 
-        return new DraftTextInfo(roles, allySide, ownSlot, bans);
+        return new DraftTextInfo(roles, allySide, ownSlot, bans) { Names = names };
     }
 
     public static PixelRect ChatRect(int clientWidth, int clientHeight) =>

@@ -73,6 +73,12 @@ public sealed class OverlaySettingsViewModel : ObservableObject
         set { O.ShowReasons = value; _store.Save(); }
     }
 
+    public bool ShowEnemyPredictions
+    {
+        get => O.ShowEnemyPredictions;
+        set { O.ShowEnemyPredictions = value; _store.Save(); }
+    }
+
     public bool ShowPlan
     {
         get => O.ShowPlan;
@@ -108,7 +114,7 @@ public sealed class OverlaySettingsViewModel : ObservableObject
     private void RaiseAll()
     {
         foreach (var n in new[] { nameof(UntilMyPick), nameof(WholeDraft), nameof(SizeS), nameof(SizeM), nameof(SizeL),
-                                  nameof(Opacity), nameof(OpacityText), nameof(ShowReasons), nameof(ShowPlan), nameof(PreviewBackground),
+                                  nameof(Opacity), nameof(OpacityText), nameof(ShowReasons), nameof(ShowPlan), nameof(ShowEnemyPredictions), nameof(PreviewBackground),
                                   nameof(PreviewWidth), nameof(PreviewHeight), nameof(PreviewLeft), nameof(PreviewTop) })
             Raise(n);
     }

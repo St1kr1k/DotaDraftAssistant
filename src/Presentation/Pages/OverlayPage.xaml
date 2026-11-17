@@ -96,6 +96,13 @@
                             <CheckBox IsChecked="{Binding ShowPlan}" Foreground="{StaticResource Text}" Margin="0,10,0,0">
                                 <TextBlock Text="После пика показывать план на игру" FontSize="14" />
                             </CheckBox>
+                            <CheckBox IsChecked="{Binding ShowEnemyPredictions}" Foreground="{StaticResource Text}" Margin="0,10,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="Догадки о пиках соперников" FontSize="14" />
+                                    <TextBlock FontSize="12" Foreground="{StaticResource Muted}" TextWrapping="Wrap" MaxWidth="420"
+                                               Text="Поверх пустых слотов врагов — герой, которого игрок чаще всего берёт (по его открытым матчам на OpenDota). Только догадка: скрытые профили и одинаковые ники не находятся." />
+                                </StackPanel>
+                            </CheckBox>
                         </StackPanel>
                     </Border>
 

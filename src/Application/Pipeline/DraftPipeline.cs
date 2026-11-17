@@ -41,6 +41,9 @@ public sealed record DraftSnapshot(
 {
     /// <summary>План на игру после вашего пика (null — герой ещё не выбран или не определён).</summary>
     public GamePlan? Plan { get; init; }
+
+    /// <summary>Ники игроков под слотами, прочитанные с экрана драфта.</summary>
+    public IReadOnlyDictionary<SlotId, string> PlayerNames { get; init; } = new Dictionary<SlotId, string>();
 }
 
 /// <summary>
@@ -58,6 +61,7 @@ public sealed class DraftPipeline
     private readonly GamePlanService? _plans;
     private GamePlan? _plan;
     private string? _draftId;
+    private readonly Dictionary<SlotId, string> _playerNames = new();
     private readonly Dictionary<SlotId, int?> _loggedSlots = new();
     private DraftSide? _loggedSide;
     private int? _loggedMySlot;
@@ -187,6 +191,7 @@ public sealed class DraftPipeline
         if (transition is { From: DraftPhase.Idle, To: DraftPhase.DraftDetected })
         {
             _draftId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            _playerNames.Clear();
             _loggedSlots.Clear();
             _loggedSide = null;
             _loggedMySlot = null;
@@ -324,6 +329,16 @@ public sealed class DraftPipeline
             foreach (var b in bans) changed |= _chatBans.Add(b);
         if (o.AllySide is { } ally && _screenAllySide != ally) { _screenAllySide = ally; changed = true; }
         if (o.OwnSlotIndex is { } own && _mySlot != own) { _mySlot = own; changed = true; }
+        if (o.PlayerNames is { } names)
+        {
+            foreach (var (slot, name) in names)
+            {
+                // Более длинное прочтение ника надёжнее (OCR иногда теряет часть букв).
+                if (_playerNames.TryGetValue(slot, out var old) && old.Length >= name.Length) continue;
+                _playerNames[slot] = name;
+                changed = true;
+            }
+        }
         return changed;
     }
 
@@ -382,7 +397,7 @@ public sealed class DraftPipeline
         bool ownPicked = OwnHeroPicked(state, FreshHint());
         var plan = ownPicked ? BuildPlan(state, position, profile) : null;
         _last = new DraftSnapshot(status, message, state, sideSource, recs, enemyRoles, _patch, screenConfidence, ownPicked,
-                                  position, fromDraft) { Plan = plan };
+                                  position, fromDraft) { Plan = plan, PlayerNames = new Dictionary<SlotId, string>(_playerNames) };
         SnapshotUpdated?.Invoke(this, _last);
     }
 

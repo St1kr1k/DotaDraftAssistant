@@ -53,6 +53,10 @@ public static class NativeWindow
     /// </summary>
     public static bool ExcludeFromCapture(Window w) => SetWindowDisplayAffinity(Handle(w), WDA_EXCLUDEFROMCAPTURE);
 
+    /// <summary>Поставить окно в прямоугольник в физических пикселях.</summary>
+    public static void Place(Window w, int x, int y, int width, int height) =>
+        SetWindowPos(Handle(w), 0, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+
     /// <summary>Переместить окно в физических пикселях (без пересчёта DPI WPF).</summary>
     public static void MoveTo(Window w, int x, int y) =>
         SetWindowPos(Handle(w), 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);

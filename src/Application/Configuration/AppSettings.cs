@@ -186,6 +186,11 @@ public sealed class OverlayOptions
     public bool ShowPlan { get; set; } = true;
     /// <summary>Сколько секунд план остаётся на экране после конца драфта (Ctrl+Shift+O — скрыть раньше).</summary>
     public int PlanLingerSeconds { get; set; } = 90;
+    /// <summary>
+    /// Догадки о пиках соперников поверх их пустых слотов (по открытой статистике игроков на OpenDota).
+    /// Выключено по умолчанию.
+    /// </summary>
+    public bool ShowEnemyPredictions { get; set; }
 }
 
 public sealed class GsiOptions

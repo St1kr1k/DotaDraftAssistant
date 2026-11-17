@@ -53,6 +53,9 @@ public sealed class VisualDraftDetector : IDraftDetector
 
     public IReadOnlyList<SlotId> Slots => DraftLayout.StandardSlots;
 
+    /// <summary>Сетка слотов, найденная на последнем кадре (только автоматический режим), в координатах клиента Dota.</summary>
+    public PlayerBarGrid? CurrentGrid => _analyzer.IsCalibrated ? null : _grid;
+
     public FrameAnalysis? LastAnalysis { get; private set; }
 
     /// <summary>Как сейчас определяется разметка (для экрана «Настройка»).</summary>
@@ -129,6 +132,7 @@ public sealed class VisualDraftDetector : IDraftDetector
             AllySide = t?.AllySide,
             OwnSlotIndex = t?.OwnSlotIndex,
             BannedHeroes = t?.BannedHeroes,
+            PlayerNames = t?.Names,
         };
     }
 
