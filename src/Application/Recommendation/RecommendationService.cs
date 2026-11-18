@@ -29,7 +29,7 @@ public interface IRecommendationService
 /// переходят от «раннего» набора к «позднему» по мере того, как становятся известны враги.
 ///
 /// Если есть статистика позиций, герои, которых на вашей позиции почти не играют
-/// (меньше MinPositionShare их игр), не предлагаются — кроме ваших ★ героев.
+/// (меньше MinPositionShare их игр), не предлагаются — даже если они отмечены ★/♥.
 /// </summary>
 public sealed class RecommendationService(
     IHeroRepository heroes,
@@ -45,9 +45,8 @@ public sealed class RecommendationService(
 
     private bool PlayedOnPosition(Hero hero, PlayerProfile profile, double minShare)
     {
+        // Без исключений для ★/♥: «нравится герой» не значит «играю его на этой позиции».
         if (positions is null || minShare <= 0) return true;
-        var pref = profile.GetPreference(hero.Id);
-        if (pref is HeroPreference.Main or HeroPreference.Comfort) return true;
         var share = positions.Share(hero, profile.MyPosition);
         return share is null || share >= minShare;
     }

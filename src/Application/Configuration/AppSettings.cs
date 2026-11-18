@@ -87,7 +87,7 @@ public sealed class RecognitionOptions
 public sealed class ScoringOptions
 {
     /// <summary>Версия набора весов. При обновлении приложения со сменой весов старые сохранённые настройки оценки сбрасываются.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
     public int Version { get; set; }
 
     /// <summary>
@@ -140,7 +140,7 @@ public sealed class ScoringOptions
     /// (защита от «WK мид»: редкие специалисты дают высокий винрейт на чужой роли).
     /// Работает, только когда есть статистика позиций.
     /// </summary>
-    public double MinPositionShare { get; set; } = 0.10;
+    public double MinPositionShare { get; set; } = 0.15;
 
     /// <summary>Сглаживание винрейта: столько "виртуальных" игр с WR 50% добавляется к выборке.</summary>
     public int MetaPriorGames { get; set; } = 500;

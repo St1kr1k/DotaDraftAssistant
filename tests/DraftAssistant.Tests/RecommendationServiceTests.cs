@@ -152,10 +152,10 @@ public class RecommendationServiceTests
         Assert.DoesNotContain(recs, r => r.Hero.Id == Sniper.Id);
         Assert.Contains(recs, r => r.Hero.Id == Axe.Id);
 
-        // ★ герой остаётся, даже если на позиции его почти не играют.
-        profile.Preferences[Sniper.Id] = HeroPreference.Main;
+        // Отметка ★/♥ не делает героя мидером: на позиции его почти не играют — не предлагаем.
+        profile.Preferences[Sniper.Id] = HeroPreference.Comfort;
         recs = Service(positions: roles).Recommend(State(), profile, patch, 10);
-        Assert.Contains(recs, r => r.Hero.Id == Sniper.Id);
+        Assert.DoesNotContain(recs, r => r.Hero.Id == Sniper.Id);
     }
 
     [Fact]
