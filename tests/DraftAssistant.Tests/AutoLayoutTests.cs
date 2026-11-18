@@ -142,6 +142,10 @@ public class AutoLayoutTests
         Assert.Equal(65, DraftTextParsing.ParseBanLine("Запрещён герой: Batrider.", heroes)?.Id);
         Assert.Equal(46, DraftTextParsing.ParseBanLine("Запрещен герой: Templar Assassin.", heroes)?.Id);
         Assert.Null(DraftTextParsing.ParseBanLine("pycl: давай мид", heroes));
+        // Так латинский OCR читает русскую строку бана.
+        Assert.Equal(65, DraftTextParsing.ParseBanLine("3anpewéu repou: Batrider.", heroes)?.Id);
+        Assert.Equal(46, DraftTextParsing.ParseBanLine("3anpeweu repon: Templar Assasin.", heroes)?.Id);
+        Assert.Null(DraftTextParsing.ParseBanLine("Kruge: Batrider", heroes));
     }
 
     [Theory]

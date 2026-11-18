@@ -118,11 +118,15 @@ public sealed class DraftTextReader
             {
                 // Свой ник ищем на стороне с подписями ролей, а если их не нашлось — на обеих:
                 // сторона, где нашёлся ваш ник, и есть ваша команда (обычный пик, без подписей ролей).
-                foreach (var (slot, text) in names.OrderBy(kv => allySide is { } k && kv.Key.Side == k ? 0 : 1))
-                {
-                    if (allySide is { } known && slot.Side != known) continue;
-                    if (DraftTextParsing.NameMatches(text, playerName)) { ownSlot = slot.Index; allySide ??= slot.Side; break; }
-                }
+                // Самый похожий ник, а не первый «подходящий»: короткие обрывки ников соседей раньше давали ложный слот.
+                var best = names
+                    .Where(kv => allySide is not { } known || kv.Key.Side == known)
+                    .Select(kv => (Slot: kv.Key, Sim: DraftTextParsing.NameSimilarity(kv.Value, playerName),
+                                   Match: DraftTextParsing.NameMatches(kv.Value, playerName)))
+                    .Where(x => x.Match)
+                    .OrderByDescending(x => x.Sim)
+                    .FirstOrDefault();
+                if (best.Match) { ownSlot = best.Slot.Index; allySide ??= best.Slot.Side; }
             }
         }
 

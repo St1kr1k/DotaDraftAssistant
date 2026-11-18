@@ -69,15 +69,62 @@ public static class DraftTextParsing
     /// </summary>
     public static Hero? ParseBanLine(string line, IHeroRepository heroes)
     {
-        var lower = line.ToLowerInvariant();
-        if (!lower.Contains("запрещ") && !lower.Contains("ban")) return null;
         int colon = line.LastIndexOf(':');
-        if (colon < 0 || colon == line.Length - 1) return null;
+        if (colon <= 0 || colon == line.Length - 1) return null;
+        if (!IsBanPrefix(line[..colon])) return null;
         var name = NormalizeName(line[(colon + 1)..]);
         if (name.Length < 2) return null;
         return heroes.All.FirstOrDefault(h => NormalizeName(h.LocalizedName) == name)
                ?? heroes.All.FirstOrDefault(h => h.Aliases.Any(a => NormalizeName(a) == name))
-               ?? heroes.All.FirstOrDefault(h => name.Length >= 5 && NormalizeName(h.LocalizedName).StartsWith(name));
+               ?? heroes.All.FirstOrDefault(h => name.Length >= 5 && NormalizeName(h.LocalizedName).StartsWith(name))
+               // Ошибка OCR в одну-две буквы («Rubjck», «Juggemaut»).
+               ?? heroes.All
+                   .Select(h => (Hero: h, D: Distance(NormalizeName(h.LocalizedName), name)))
+                   .Where(x => name.Length >= 5 && x.D <= (name.Length >= 10 ? 2 : 1))
+                   .OrderBy(x => x.D).Select(x => x.Hero).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Начало строки бана. Чат читается латинским OCR (имена героев английские), и русское
+    /// «Запрещён герой» превращается в «3anpewéu repou» — поэтому проверяются и такие прочтения.
+    /// </summary>
+    private static bool IsBanPrefix(string prefix)
+    {
+        var p = NormalizeName(prefix);
+        string[] markers = ["запрещ", "запр", "герой", "3anp", "zanp", "anpe", "repo", "banned", "ban"];
+        return markers.Any(p.Contains);
+    }
+
+    /// <summary>Расстояние Левенштейна (число правок между строками).</summary>
+    public static int Distance(string a, string b)
+    {
+        var prev = new int[b.Length + 1];
+        var cur = new int[b.Length + 1];
+        for (int j = 0; j <= b.Length; j++) prev[j] = j;
+        for (int i = 1; i <= a.Length; i++)
+        {
+            cur[0] = i;
+            for (int j = 1; j <= b.Length; j++)
+                cur[j] = Math.Min(Math.Min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+            (prev, cur) = (cur, prev);
+        }
+        return prev[b.Length];
+    }
+
+    /// <summary>
+    /// Похожесть ника с экрана (может быть обрезан «…») на ник игрока: 1 — совпадает, 0 — ничего общего.
+    /// Обрезанный ник сравнивается с началом полного той же длины.
+    /// </summary>
+    public static double NameSimilarity(string onScreen, string playerName)
+    {
+        var a = NormalizeName(onScreen);
+        var b = NormalizeName(playerName);
+        if (a.Length < 3 || b.Length < 3) return 0;
+        bool truncated = onScreen.TrimEnd().EndsWith("…") || onScreen.TrimEnd().EndsWith("...");
+        if (truncated && a.Length < b.Length)
+            b = b[..Math.Min(b.Length, a.Length)];
+        int d = Distance(a, b);
+        return 1 - (double)d / Math.Max(a.Length, b.Length);
     }
 
     /// <summary>
@@ -88,7 +135,8 @@ public static class DraftTextParsing
         var a = NormalizeName(onScreen);
         var b = NormalizeName(playerName);
         if (a.Length < 3 || b.Length < 3) return false;
-        return a == b || b.StartsWith(a) || a.StartsWith(b) || (a.Length >= 5 && b.Contains(a));
+        return a == b || (a.Length >= 4 && b.StartsWith(a)) || (b.Length >= 4 && a.StartsWith(b))
+               || NameSimilarity(onScreen, playerName) >= 0.8;
     }
 
     private static string Normalize(string s) =>

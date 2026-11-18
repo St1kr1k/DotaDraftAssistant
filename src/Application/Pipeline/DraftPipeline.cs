@@ -62,6 +62,7 @@ public sealed class DraftPipeline
     private GamePlan? _plan;
     private string? _draftId;
     private readonly Dictionary<SlotId, string> _playerNames = new();
+    private int? _mySlotCandidate;
     private readonly Dictionary<SlotId, int?> _loggedSlots = new();
     private DraftSide? _loggedSide;
     private int? _loggedMySlot;
@@ -203,6 +204,7 @@ public sealed class DraftPipeline
             _chatBans.Clear();
             _screenAllySide = null;
             _mySlot = null;
+            _mySlotCandidate = null;
             _baselineScores = new Dictionary<int, double>();
             _currentScores = new Dictionary<int, double>();
             if (observation.DraftScreenVisible) _tracker.Update(observation.Slots);
@@ -326,9 +328,20 @@ public sealed class DraftPipeline
             }
         }
         if (o.BannedHeroes is { } bans)
-            foreach (var b in bans) changed |= _chatBans.Add(b);
+            foreach (var b in bans)
+                if (_chatBans.Add(b))
+                {
+                    changed = true;
+                    _log.Info($"Бан из чата: {_heroes.Find(b)?.LocalizedName ?? b.ToString()}");
+                }
         if (o.AllySide is { } ally && _screenAllySide != ally) { _screenAllySide = ally; changed = true; }
-        if (o.OwnSlotIndex is { } own && _mySlot != own) { _mySlot = own; changed = true; }
+        if (o.OwnSlotIndex is { } own && _mySlot != own)
+        {
+            // Свой слот меняем, только если новое прочтение повторилось дважды подряд (OCR ников иногда ошибается).
+            if (_mySlot is null || _mySlotCandidate == own) { _mySlot = own; _mySlotCandidate = null; changed = true; }
+            else _mySlotCandidate = own;
+        }
+        else if (o.OwnSlotIndex == _mySlot) _mySlotCandidate = null;
         if (o.PlayerNames is { } names)
         {
             foreach (var (slot, name) in names)
