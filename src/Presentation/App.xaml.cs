@@ -71,6 +71,18 @@ public partial class App : System.Windows.Application
         // Свежая статистика меты скачивается отдельно от версий программы (релиз «data»):
         // герои/портреты и статистика берутся из самого подходящего пакета, а встроенные данные — запасной вариант.
         var packs = new DataPackStore(dataDir, Path.Combine(userDir, "data"), _log);
+        // Свежая мета скачивается ДО загрузки данных: тогда и подсказки, и страница героев сразу на новых данных.
+        var dataUpdater = AppUpdater.RepoUrl is { } repoUrl ? new DataPackUpdater(packs, repoUrl, _log) : null;
+        if (dataUpdater is not null)
+        {
+            try
+            {
+                var check = Task.Run(() => dataUpdater.CheckOnceAsync(
+                    packs.ResolvePatchRoot(), DataPackStore.HeroIds(packs.ResolveHeroesRoot()), _cts.Token));
+                if (!check.Wait(TimeSpan.FromSeconds(20))) _log.Warn("Свежие данные меты не успели скачаться — пока старые");
+            }
+            catch (Exception ex) { _log.Warn($"Свежие данные меты не получены: {ex.GetBaseException().Message}"); }
+        }
         var heroesDir = packs.ResolveHeroesRoot();
         var patchDir = packs.ResolvePatchRoot();
         packs.Cleanup(heroesDir, patchDir);
@@ -217,13 +229,16 @@ public partial class App : System.Windows.Application
         _ = Task.Run(() => _updater.RunAsync(_cts.Token));
 
         // Мета: свежие данные подключаются без перезапуска (между драфтами), новые герои — после перезапуска.
-        if (AppUpdater.RepoUrl is { } repoUrl)
+        if (dataUpdater is not null)
         {
-            var dataUpdater = new DataPackUpdater(packs, repoUrl, _log);
             dataUpdater.PatchDataUpdated += (dir, pack) =>
             {
                 patchProvider.DataDir = dir;
                 _pipeline.ReloadPatchData();
+                Dispatcher.InvokeAsync(() =>
+                {
+                    _mainVm.UpdateText = $"Скачана свежая мета ({pack.Patch}) — подключится к следующему драфту";
+                });
             };
             dataUpdater.NewHeroesDownloaded += _ => Dispatcher.InvokeAsync(() =>
             {
@@ -447,6 +462,7 @@ public partial class App : System.Windows.Application
         _hotkeys?.Dispose();
         _gsi?.Dispose();
         _settings?.Save();
+        _updater?.ApplyOnExit();
         base.OnExit(e);
     }
 }

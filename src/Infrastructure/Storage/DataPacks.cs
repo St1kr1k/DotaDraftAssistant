@@ -117,59 +117,68 @@ public sealed class DataPackUpdater(DataPackStore store, string repoUrl, IAppLog
     /// <summary>Скачаны портреты новых героев — подключатся после перезапуска.</summary>
     public event Action<string>? NewHeroesDownloaded;
 
+    /// <summary>Результат проверки: куда установлены свежая статистика и/или новые герои (null — не было).</summary>
+    public sealed record CheckResult(string? PatchRoot, string? HeroesRoot, PackMetaDto? Remote);
+
+    /// <summary>Одна проверка: скачать и установить то, что новее текущего.</summary>
     /// <param name="currentPatchRoot">Откуда сейчас читается статистика.</param>
-    /// <param name="currentHeroIds">Какие герои известны программе сейчас.</param>
+    /// <param name="knownHeroIds">Какие герои известны программе сейчас.</param>
+    public async Task<CheckResult> CheckOnceAsync(string currentPatchRoot, IReadOnlySet<int> knownHeroIds, CancellationToken ct)
+    {
+        var remote = await GetMeta(ct).ConfigureAwait(false);
+        if (remote is null) return new CheckResult(null, null, null);
+        var current = DataPackStore.FetchedAt(currentPatchRoot);
+        bool newerStats = remote.FetchedAt > current;
+        bool newHeroes = remote.HeroIds.Count > 0 && !remote.HeroIds.All(knownHeroIds.Contains);
+        if (!newerStats && !newHeroes) return new CheckResult(null, null, remote);
+
+        var zips = new List<string>();
+        try
+        {
+            if (newerStats) zips.Add(await Download(PatchAsset, ct).ConfigureAwait(false));
+            if (newHeroes) zips.Add(await Download(HeroesAsset, ct).ConfigureAwait(false));
+            var dir = store.Install(zips);
+            string? patchRoot = newerStats && DataPackStore.FetchedAt(dir) > current ? dir : null;
+            string? heroesRoot = newHeroes && File.Exists(DataFiles.HeroesJson(dir)) ? dir : null;
+            if (patchRoot is not null) log.Info($"Свежие данные меты: патч {remote.Patch}, собраны {remote.FetchedAt:u}");
+            if (heroesRoot is not null)
+                log.Info($"Скачаны данные новых героев: {string.Join(", ", remote.HeroIds.Where(id => !knownHeroIds.Contains(id)))}");
+            return new CheckResult(patchRoot, heroesRoot, remote);
+        }
+        finally
+        {
+            foreach (var z in zips) TryDelete(z);
+        }
+    }
+
+    /// <summary>Фоновая проверка каждые 3 часа (первая — через 3 часа: при запуске проверка уже была).</summary>
     public async Task RunAsync(string currentPatchRoot, IReadOnlySet<int> currentHeroIds, CancellationToken ct)
     {
         var known = new HashSet<int>(currentHeroIds);
-        bool heroesDownloaded = false;
         while (!ct.IsCancellationRequested)
         {
+            try { await Task.Delay(TimeSpan.FromHours(3), ct).ConfigureAwait(false); }
+            catch (TaskCanceledException) { return; }
             try
             {
-                var remote = await GetMeta(ct).ConfigureAwait(false);
-                if (remote is not null)
+                var r = await CheckOnceAsync(currentPatchRoot, known, ct).ConfigureAwait(false);
+                if (r.PatchRoot is { } dir)
                 {
-                    var current = DataPackStore.FetchedAt(currentPatchRoot);
-                    bool newerStats = remote.FetchedAt > current;
-                    bool newHeroes = !heroesDownloaded && remote.HeroIds.Count > 0 && !remote.HeroIds.All(known.Contains);
-                    if (newerStats || newHeroes)
-                    {
-                        var zips = new List<string>();
-                        if (newerStats) zips.Add(await Download(PatchAsset, ct).ConfigureAwait(false));
-                        if (newHeroes) zips.Add(await Download(HeroesAsset, ct).ConfigureAwait(false));
-                        var dir = store.Install(zips);
-                        foreach (var z in zips) TryDelete(z);
-
-                        if (newerStats)
-                        {
-                            if (DataPackStore.FetchedAt(dir) <= current)
-                                log.Warn("Пакет данных скачан, но он не новее текущего — пропущен");
-                            else
-                            {
-                                currentPatchRoot = dir;
-                                log.Info($"Свежие данные меты: патч {remote.Patch}, собраны {remote.FetchedAt:u}");
-                                PatchDataUpdated?.Invoke(dir, remote);
-                            }
-                        }
-                        if (newHeroes)
-                        {
-                            heroesDownloaded = true;
-                            log.Info($"Скачаны данные новых героев: {string.Join(", ", remote.HeroIds.Where(id => !known.Contains(id)))}");
-                            NewHeroesDownloaded?.Invoke(dir);
-                        }
-                        store.Cleanup(currentPatchRoot, dir);
-                    }
+                    currentPatchRoot = dir;
+                    PatchDataUpdated?.Invoke(dir, r.Remote!);
                 }
+                if (r.HeroesRoot is { } h)
+                {
+                    foreach (var id in r.Remote!.HeroIds) known.Add(id);
+                    NewHeroesDownloaded?.Invoke(h);
+                }
+                if (r.PatchRoot is not null || r.HeroesRoot is not null) store.Cleanup(currentPatchRoot, r.HeroesRoot ?? currentPatchRoot);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
             catch (Exception ex)
             {
                 log.Warn($"Обновление данных меты не удалось: {ex.Message}");
             }
-
-            try { await Task.Delay(TimeSpan.FromHours(3), ct).ConfigureAwait(false); }
-            catch (TaskCanceledException) { return; }
         }
     }
 

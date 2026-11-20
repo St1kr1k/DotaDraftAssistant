@@ -37,10 +37,10 @@ public sealed class MainViewModel : ObservableObject
         PatchText = PatchLine(s.Patch, VersionText);
     }
 
-    /// <summary>«Патч 7.40 · данные от 20.11 · v1.0.50».</summary>
+    /// <summary>«Патч 7.42 · v1.0.38» и на второй строке «данные от 21.11 01:56».</summary>
     public static string PatchLine(PatchData patch, string version) =>
         patch.FetchedAt > DateTimeOffset.MinValue.AddYears(1)
-            ? $"Патч {patch.PatchName} · данные от {patch.FetchedAt.ToLocalTime():dd.MM} · {version}"
+            ? $"Патч {patch.PatchName} · {version}\nданные от {patch.FetchedAt.ToLocalTime():dd.MM HH:mm}"
             : $"Патч {patch.PatchName} · {version}";
 
     private static Brush Frozen(string hex)

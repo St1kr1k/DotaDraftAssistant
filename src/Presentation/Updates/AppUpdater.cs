@@ -71,8 +71,9 @@ public sealed class AppUpdater(IAppLog log)
             log.Info($"Найдено обновление {version}, загружаю");
             await _manager.DownloadUpdatesAsync(update, p => StatusChanged?.Invoke($"Загрузка {version}: {p}%", false)).ConfigureAwait(false);
 
-            // Если пользователь просто закроет приложение — обновление установится само.
-            _manager.WaitExitThenApplyUpdates(update.TargetFullRelease, silent: true, restart: false);
+            // Установится при закрытии (ApplyOnExit) или сразу — кнопкой «Перезапустить и обновить».
+            // Заранее WaitExitThenApplyUpdates не вызывается: такой фоновый установщик ставил обновление
+            // без перезапуска раньше, чем срабатывала кнопка, и программа просто закрывалась.
             _ready = update;
             StatusChanged?.Invoke($"Версия {version} скачана — установится при закрытии", true);
         }
@@ -83,10 +84,21 @@ public sealed class AppUpdater(IAppLog log)
         }
     }
 
+    private bool _restarting;
+
     /// <summary>Установить скачанное обновление прямо сейчас и перезапустить приложение.</summary>
     public void RestartAndApply()
     {
         if (_manager is null || _ready is null) return;
+        _restarting = true;
         _manager.ApplyUpdatesAndRestart(_ready.TargetFullRelease);
+    }
+
+    /// <summary>Программа закрывается — поставить скачанное обновление (без перезапуска).</summary>
+    public void ApplyOnExit()
+    {
+        if (_manager is null || _ready is null || _restarting) return;
+        try { _manager.WaitExitThenApplyUpdates(_ready.TargetFullRelease, silent: true, restart: false); }
+        catch (Exception ex) { log.Warn($"Обновление при закрытии не запущено: {ex.Message}"); }
     }
 }
