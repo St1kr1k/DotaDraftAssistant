@@ -140,3 +140,19 @@ public sealed class PairDto
     public int Wins { get; set; }
     public string Source { get; set; } = "";
 }
+
+/// <summary>
+/// Описание пакета данных (patch/pack.json и data-meta.json в релизе «data»).
+/// Пакет собирается в GitHub Actions по расписанию и скачивается приложением без выпуска новой версии.
+/// </summary>
+public sealed class PackMetaDto
+{
+    /// <summary>Патч, по которому собрана статистика.</summary>
+    public string Patch { get; set; } = "unknown";
+    /// <summary>Когда собран пакет: приложение берёт пакет, если он новее своих данных.</summary>
+    public DateTimeOffset FetchedAt { get; set; }
+    /// <summary>Когда этот патч впервые попал в пакет (свежий патч — данные обновляются чаще).</summary>
+    public DateTimeOffset PatchSince { get; set; }
+    /// <summary>Герои в пакете: если появились новые — нужны портреты (data-heroes.zip).</summary>
+    public List<int> HeroIds { get; set; } = [];
+}

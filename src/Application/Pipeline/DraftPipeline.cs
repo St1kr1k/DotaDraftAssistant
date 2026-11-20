@@ -77,6 +77,7 @@ public sealed class DraftPipeline
 
     private PatchData _patch = PatchData.Empty;
     private volatile bool _recommendationsDirty = true;
+    private volatile bool _patchReloadPending;
     private volatile int _manualSide = -1; // -1 = авто
     private DraftSnapshot? _last;
 
@@ -117,10 +118,19 @@ public sealed class DraftPipeline
 
     public event EventHandler<DraftSnapshot>? SnapshotUpdated;
 
+    /// <summary>Подключены другие данные патча (смена ранга или свежие данные меты).</summary>
+    public event EventHandler<PatchData>? PatchDataChanged;
+
     public DraftSnapshot? Last => _last;
 
     /// <summary>Данные патча, по которым сейчас считаются рекомендации (для ранга пользователя).</summary>
     public PatchData Patch => _patch;
+
+    /// <summary>
+    /// Скачаны свежие данные меты — перечитать их. Подключаются вне драфта (пока никто не выбрал героя),
+    /// чтобы оценки не менялись посреди пиков.
+    /// </summary>
+    public void ReloadPatchData() => _patchReloadPending = true;
 
     /// <summary>Профиль или веса изменились — пересчитать рекомендации на следующем кадре.</summary>
     public void InvalidateRecommendations() => _recommendationsDirty = true;
@@ -374,12 +384,15 @@ public sealed class DraftPipeline
 
         var (position, fromDraft) = EffectivePosition(state);
         var profile = _profile();
-        if (profile.Rank != _patch.Rank)
+        bool reload = _patchReloadPending && state.ConfirmedPickCount == 0;
+        if (profile.Rank != _patch.Rank || reload)
         {
-            // Пользователь сменил ранг — статистика другой группы рангов.
+            // Пользователь сменил ранг — статистика другой группы рангов; или скачаны свежие данные меты.
+            if (reload) _patchReloadPending = false;
             _patch = _patchProvider.Load(profile.Rank);
             _recommendationsDirty = true;
-            _log.Info($"Patch data для ранга {profile.Rank}: matchups={_patch.Matchups.Count}, positions={_patch.Positions.Count}");
+            _log.Info($"Patch data {_patch.PatchName} ({_patch.FetchedAt:u}) для ранга {profile.Rank}: matchups={_patch.Matchups.Count}, positions={_patch.Positions.Count}");
+            PatchDataChanged?.Invoke(this, _patch);
         }
         if (profile.MyPosition != position)
         {

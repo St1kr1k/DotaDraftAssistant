@@ -1,3 +1,4 @@
+using DraftAssistant.Domain.Patch;
 using System.Windows.Media;
 using DraftAssistant.Application.Pipeline;
 using DraftAssistant.Presentation.Components;
@@ -33,8 +34,14 @@ public sealed class MainViewModel : ObservableObject
             PipelineStatus.Error => ("Ошибка анализа", Warn),
             _ => ("Dota 2 найдена", Ok),
         };
-        PatchText = $"Патч {s.Patch.PatchName} · {VersionText}";
+        PatchText = PatchLine(s.Patch, VersionText);
     }
+
+    /// <summary>«Патч 7.40 · данные от 20.11 · v1.0.50».</summary>
+    public static string PatchLine(PatchData patch, string version) =>
+        patch.FetchedAt > DateTimeOffset.MinValue.AddYears(1)
+            ? $"Патч {patch.PatchName} · данные от {patch.FetchedAt.ToLocalTime():dd.MM} · {version}"
+            : $"Патч {patch.PatchName} · {version}";
 
     private static Brush Frozen(string hex)
     {

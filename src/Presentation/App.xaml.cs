@@ -68,6 +68,14 @@ public partial class App : System.Windows.Application
         var userDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DotaDraftAssistant");
         var dataDir = Path.Combine(AppContext.BaseDirectory, "data");
         _log = new FileLog(userDir);
+        // Свежая статистика меты скачивается отдельно от версий программы (релиз «data»):
+        // герои/портреты и статистика берутся из самого подходящего пакета, а встроенные данные — запасной вариант.
+        var packs = new DataPackStore(dataDir, Path.Combine(userDir, "data"), _log);
+        var heroesDir = packs.ResolveHeroesRoot();
+        var patchDir = packs.ResolvePatchRoot();
+        packs.Cleanup(heroesDir, patchDir);
+        if (heroesDir != dataDir || patchDir != dataDir)
+            _log.Info($"Данные: герои из {heroesDir}, статистика из {patchDir}");
         DispatcherUnhandledException += (_, args) =>
         {
             _log.Error("UI exception", args.Exception);
@@ -81,7 +89,7 @@ public partial class App : System.Windows.Application
         JsonHeroRepository heroes;
         try
         {
-            heroes = JsonHeroRepository.Load(dataDir);
+            heroes = JsonHeroRepository.Load(heroesDir);
         }
         catch (FileNotFoundException ex)
         {
@@ -90,13 +98,13 @@ public partial class App : System.Windows.Application
             Shutdown();
             return;
         }
-        var patchProvider = new LocalPatchDataProvider(dataDir, _log);
+        var patchProvider = new LocalPatchDataProvider(patchDir, _log);
         var patch = patchProvider.Load(_profile.Current.Rank);
 
         // --- Infrastructure: «глаза» ---
         _capture = new GdiScreenCaptureService();
         _layout = new JsonLayoutStore(userDir, dataDir);
-        _templates = HeroTemplateLibrary.LoadFromDirectory(DataFiles.HeroesDir(dataDir), heroes.All.Select(h => h.Id),
+        _templates = HeroTemplateLibrary.LoadFromDirectory(DataFiles.HeroesDir(heroesDir), heroes.All.Select(h => h.Id),
                                                            _settings.Current.Recognition.PortraitZoom);
         _log.Info($"Templates loaded for {_templates.HeroCount}/{heroes.All.Count} heroes");
 
@@ -154,7 +162,7 @@ public partial class App : System.Windows.Application
         _profile.Changed += (_, _) => _pipeline.InvalidateRecommendations();
 
         // --- Presentation ---
-        var images = new HeroImages(DataFiles.HeroesDir(dataDir));
+        var images = new HeroImages(DataFiles.HeroesDir(heroesDir));
 
         _images = images;
         _predictionWindow = new EnemyPredictionWindow();
@@ -175,7 +183,7 @@ public partial class App : System.Windows.Application
         var overlayVm = new OverlaySettingsViewModel(_settings);
         overlayVm.MoveModeRequested += (_, _) => ToggleMoveMode();
 
-        _mainVm = new MainViewModel { VersionText = $"v{AppUpdater.CurrentVersion}", PatchText = $"Патч {patch.PatchName} · v{AppUpdater.CurrentVersion}" };
+        _mainVm = new MainViewModel { VersionText = $"v{AppUpdater.CurrentVersion}", PatchText = MainViewModel.PatchLine(patch, $"v{AppUpdater.CurrentVersion}") };
         _main = new MainWindow(
             _mainVm,
             new HeroesPage(new HeroesViewModel(heroes, _profile, roles, patch, images)),
@@ -207,6 +215,23 @@ public partial class App : System.Windows.Application
             _mainVm.CanRestartToUpdate = ready;
         });
         _ = Task.Run(() => _updater.RunAsync(_cts.Token));
+
+        // Мета: свежие данные подключаются без перезапуска (между драфтами), новые герои — после перезапуска.
+        if (AppUpdater.RepoUrl is { } repoUrl)
+        {
+            var dataUpdater = new DataPackUpdater(packs, repoUrl, _log);
+            dataUpdater.PatchDataUpdated += (dir, pack) =>
+            {
+                patchProvider.DataDir = dir;
+                _pipeline.ReloadPatchData();
+            };
+            dataUpdater.NewHeroesDownloaded += _ => Dispatcher.InvokeAsync(() =>
+            {
+                _mainVm.UpdateText = "Скачаны новые герои — перезапустите программу, чтобы она их узнавала";
+            });
+            var heroIds = heroes.All.Select(h => h.Id).ToHashSet();
+            _ = Task.Run(() => dataUpdater.RunAsync(patchDir, heroIds, _cts.Token));
+        }
 
         // GSI ещё не настроен — сразу показываем раздел, где это делается в один клик.
         // GSI теперь не обязателен: свой слот находится по нику из Steam. Раздел «Настройка» открываем,

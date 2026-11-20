@@ -21,7 +21,7 @@ public sealed class AppUpdater(IAppLog log)
     public static string CurrentVersion =>
         Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "dev";
 
-    private static string? RepoUrl =>
+    public static string? RepoUrl =>
         Assembly.GetEntryAssembly()?
             .GetCustomAttributes<AssemblyMetadataAttribute>()
             .FirstOrDefault(a => a.Key == "UpdateRepoUrl")?.Value is { Length: > 0 } url ? url : null;

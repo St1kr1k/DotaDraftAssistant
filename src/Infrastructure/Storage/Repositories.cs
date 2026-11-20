@@ -63,6 +63,11 @@ public sealed class JsonHeroRepository : IHeroRepository
 /// </summary>
 public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatchDataProvider
 {
+    private volatile string _dataDir = dataDir;
+
+    /// <summary>Папка данных (с подпапкой patch). Меняется, когда скачан свежий пакет данных.</summary>
+    public string DataDir { get => _dataDir; set => _dataDir = value; }
+
     /// <summary>Насколько доверяем источнику (позиции у STRATZ точные, у OpenDota — разделение линий по ролям героя).</summary>
     private static double Reliability(string? source) => (source ?? "opendota").ToLowerInvariant() switch
     {
@@ -73,7 +78,7 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
 
     public PatchData Load(RankBracket rank)
     {
-        var dir = DataFiles.PatchDir(dataDir);
+        var dir = DataFiles.PatchDir(_dataDir);
         // Данные STRATZ лежат по группам рангов: stratz_matchups_LEGEND_ANCIENT.json и т.д.
         // Старые файлы без ранга (Legend–Immortal) используются, если файла для ранга нет.
         string S(string kind)
@@ -125,7 +130,8 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
             {
                 PatchName = meta.Patch,
                 Rank = rank,
-                FetchedAt = meta.FetchedAt,
+                // Пакет данных может быть свежее meta.json (например, обновился только STRATZ).
+                FetchedAt = Read<PackMetaDto>(Path.Combine(dir, DataPackStore.PackFile))?.FetchedAt ?? meta.FetchedAt,
                 Source = meta.Source,
                 MatchupSource = Join(meta.MatchupSource, stratz.MatchupSource),
                 PositionSource = Join(meta.PositionSource, stratz.PositionSource),

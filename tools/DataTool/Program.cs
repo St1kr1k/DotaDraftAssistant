@@ -13,6 +13,7 @@ namespace DraftAssistant.DataTool;
 
 /// <summary>
 ///   DataTool fetch        [--out data] [--api-key KEY] [--no-matchups] [--delay-ms 1100]
+///   DataTool pack         [--data data] [--out pack] [--prev data-meta.json]
 ///   DataTool check-layout --screenshot shot.png [--data data] [--user-dir DIR] [--out debug] [--player НИК]
 ///   DataTool add-template --screenshot shot.png --slot Radiant-Pick-1 --hero "Axe" [--data data] [--user-dir DIR]
 /// </summary>
@@ -31,6 +32,7 @@ internal static class Program
             {
                 "fetch" => await Fetch(opts),
                 "fetch-stratz" => await StratzFetcher.Run(opts),
+                "pack" => Pack(opts),
                 "check-layout" => CheckLayout(opts),
                 "add-template" => AddTemplate(opts),
                 _ => Usage(),
@@ -48,6 +50,8 @@ internal static class Program
         Console.WriteLine("""
             DataTool fetch        [--out data] [--api-key KEY] [--no-matchups] [--delay-ms 1100]
                 Скачивает героев, портреты, статистику патча и матчапы с OpenDota / Steam CDN.
+            DataTool pack         [--data data] [--out pack] [--prev data-meta.json]
+                Собирает пакет данных для релиза «data»: data-meta.json, data-patch.zip, data-heroes.zip.
             DataTool check-layout --screenshot shot.png [--data data] [--user-dir DIR] [--out debug]
                 Прогоняет разметку и распознавание по скриншоту, сохраняет картинку с ROI и вырезки слотов.
             DataTool add-template --screenshot shot.png --slot Radiant-Pick-1 --hero "Axe" [--data data] [--user-dir DIR]
@@ -284,6 +288,60 @@ internal static class Program
             var wait = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(20 * attempt);
             Console.Error.WriteLine($"\n  {code}, повтор через {wait.TotalSeconds:0} с…");
             await Task.Delay(wait);
+        }
+    }
+
+    /// <summary>
+    /// Пакет данных для обновления меты без новой версии программы.
+    /// PatchSince переносится из прошлого пакета, пока патч тот же: по нему расписание решает, как часто обновлять.
+    /// </summary>
+    private static int Pack(Dictionary<string, string> o)
+    {
+        string dataDir = o.GetValueOrDefault("data", "data");
+        string outDir = o.GetValueOrDefault("out", "pack");
+        var patchDir = DataFiles.PatchDir(dataDir);
+        var heroesDir = DataFiles.HeroesDir(dataDir);
+        var meta = JsonSerializer.Deserialize<PatchMetaDto>(File.ReadAllText(Path.Combine(patchDir, "meta.json")), DataFiles.Json)
+                   ?? throw new InvalidOperationException("нет patch/meta.json");
+        var heroes = JsonSerializer.Deserialize<List<HeroDto>>(File.ReadAllText(DataFiles.HeroesJson(dataDir)), DataFiles.Json) ?? [];
+        if (heroes.Count == 0) throw new InvalidOperationException("нет героев");
+
+        PackMetaDto? prev = null;
+        if (o.TryGetValue("prev", out var prevPath) && File.Exists(prevPath))
+        {
+            try { prev = JsonSerializer.Deserialize<PackMetaDto>(File.ReadAllText(prevPath), DataFiles.Json); }
+            catch (JsonException) { prev = null; }
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var pack = new PackMetaDto
+        {
+            Patch = meta.Patch,
+            FetchedAt = now,
+            PatchSince = prev is not null && prev.Patch == meta.Patch && prev.PatchSince > DateTimeOffset.MinValue ? prev.PatchSince : now,
+            HeroIds = heroes.Select(h => h.Id).OrderBy(id => id).ToList(),
+        };
+        var json = JsonSerializer.Serialize(pack, DataFiles.Json);
+        File.WriteAllText(Path.Combine(patchDir, "pack.json"), json);
+
+        Directory.CreateDirectory(outDir);
+        File.WriteAllText(Path.Combine(outDir, "data-meta.json"), json);
+        Zip(dataDir, "patch", Path.Combine(outDir, "data-patch.zip"));
+        Zip(dataDir, "heroes", Path.Combine(outDir, "data-heroes.zip"));
+        Console.WriteLine($"Пакет: патч {pack.Patch} (с {pack.PatchSince:u}), героев {pack.HeroIds.Count} → {outDir}");
+        return 0;
+    }
+
+    /// <summary>Архив подпапки с путями вида "patch/meta.json".</summary>
+    private static void Zip(string root, string sub, string zipPath)
+    {
+        if (File.Exists(zipPath)) File.Delete(zipPath);
+        using var zip = System.IO.Compression.ZipFile.Open(zipPath, System.IO.Compression.ZipArchiveMode.Create);
+        var dir = Path.Combine(root, sub);
+        foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+        {
+            var entry = sub + "/" + Path.GetRelativePath(dir, file).Replace('\\', '/');
+            System.IO.Compression.ZipFileExtensions.CreateEntryFromFile(zip, file, entry, System.IO.Compression.CompressionLevel.Optimal);
         }
     }
 

@@ -36,7 +36,10 @@ Windows-программа (C#/.NET 8, WPF) — помощник драфта Do
   Recognition (шаблоны портретов), GSI, Storage (загрузка и слияние данных), Players (OpenDota по нику).
 - `src/Presentation` — WPF: App.xaml.cs (composition root), Main, Pages, Popup, Predictions.
 - `tools/DataTool` — `fetch` (OpenDota), `fetch-stratz` (STRATZ GraphQL), `check-layout`, `add-template`.
-- `.github/workflows/release.yml` — тесты → данные (кэш по неделям) → публикация → vpk → установщик.
+- `.github/workflows/release.yml` — тесты → данные из релиза «data» (запасной путь: свой fetch) → публикация → vpk → установщик.
+- `.github/workflows/data.yml` — мета без новых версий: каждые 3 ч проверка; новый патч — сразу, первые 3 дня патча —
+  каждые 6 ч, потом раз в сутки. fetch + fetch-stratz + `DataTool pack` → пре-релиз `data`
+  (data-meta.json, data-patch.zip, data-heroes.zip). Пре-релиз не мешает `releases/latest` и Velopack.
 - `.github/workflows/stratz-probe.yml` — ручные пробные запросы к STRATZ (печатает схему или ответ в лог).
 
 ## Оценка героя
@@ -50,11 +53,16 @@ Score = 50 + 50·Σ(w·value·confidence)/Σw. Веса плавно перех�
 
 ## Данные
 
+- Приложение само подтягивает мету: `DataPackUpdater` (при запуске и каждые 3 ч) качает пакет из релиза `data`,
+  если он новее, в `%APPDATA%\DotaDraftAssistant\data\<время>\`. Статистика подключается без перезапуска,
+  но только вне драфта (0 подтверждённых пиков); новые герои (портреты) — после перезапуска.
+  Выбор папок — `DataPackStore` (статистика: свежее встроенной; герои: только если появились новые).
+
 - OpenDota: heroStats по бракетам, матчапы, лейны → позиции, items, abilities (dotaconstants).
 - STRATZ (секрет STRATZ_TOKEN): по 4 группам рангов — позиции, матчапы с K/D, пары, исходы линий,
   стартовые закупки. Перед сохранением проверка симметрии (A против B + B против A ≈ 100%).
 - ВАЖНО: STRATZ пускает токен максимум с 2 IP за 15 минут. Каждая сборка/проба в Actions — новый IP.
-  Не запускать пробу и сборку с запросами STRATZ подряд, ждать ~15 минут.
+  STRATZ опрашивает только data.yml (release.yml — лишь если пакета нет). Не запускать пробу и data.yml подряд, ждать ~15 минут.
 - STRATZ itemStartingPurchase: повторные копии (2-я ветка) помечены wasGiven=true — их НЕ отбрасывать.
 - Стартовая закупка берётся по Легенда–Титан, набор до 600 золота.
 - Если есть STRATZ по рангу, матчапы/позиции OpenDota для тех же героев не подмешиваются.

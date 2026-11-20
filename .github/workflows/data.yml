@@ -1,0 +1,142 @@
+# Свежая статистика меты без выпуска новой версии программы.
+#
+# Каждые 3 часа лёгкая проверка решает, пора ли собирать данные:
+#   • вышел новый патч (OpenDota) — сразу;
+#   • первые 3 дня патча — каждые 6 часов (мета быстро меняется, статистика набирается);
+#   • дальше — раз в сутки.
+# Пакет (data-meta.json, data-patch.zip, data-heroes.zip) кладётся в пре-релиз «data»:
+# он не считается «последней версией», поэтому ссылка на установщик и автообновление программы его не видят.
+# Приложение само скачивает пакет, если он новее его данных, и подключает между драфтами.
+#
+# STRATZ пускает токен максимум с 2 IP за 15 минут: сборка программы (release.yml) STRATZ больше не опрашивает,
+# а берёт этот пакет. Не запускать вручную сразу после stratz-probe.
+name: Meta data
+
+on:
+  schedule:
+    - cron: '23 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Собрать данные, даже если ещё не пора'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meta-data
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      refresh: ${{ steps.decide.outputs.refresh }}
+    steps:
+      - name: Пора ли обновлять данные
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          set -u
+          latest=$(curl -fsS --max-time 30 https://api.opendota.com/api/constants/patch | jq -r 'last.name // empty' || true)
+          now=$(date +%s)
+          refresh=false; reason="ещё рано"
+          if [ "$FORCE" = "true" ]; then
+            refresh=true; reason="запуск вручную"
+          elif ! gh release download data -R "$GITHUB_REPOSITORY" -p data-meta.json -O prev.json 2>/dev/null; then
+            refresh=true; reason="пакета данных ещё нет"
+          else
+            patch=$(jq -r '.patch' prev.json)
+            ts() { v=$(jq -r ".$1 // empty" prev.json); [ -n "$v" ] && date -d "$v" +%s 2>/dev/null || echo 0; }
+            age=$(( now - $(ts fetchedAt) ))
+            since=$(( now - $(ts patchSince) ))
+            if [ -n "$latest" ] && [ "$latest" != "$patch" ]; then
+              refresh=true; reason="новый патч $latest (было $patch)"
+            elif [ $since -lt $((3*86400)) ] && [ $age -ge $((6*3600 - 900)) ]; then
+              refresh=true; reason="свежий патч $patch: обновление каждые 6 часов"
+            elif [ $age -ge $((24*3600 - 900)) ]; then
+              refresh=true; reason="плановое обновление (данным $((age/3600)) ч)"
+            fi
+          fi
+          echo "Патч OpenDota: ${latest:-не получен}. Решение: $refresh — $reason"
+          echo "refresh=$refresh" >> "$GITHUB_OUTPUT"
+
+  refresh:
+    needs: check
+    if: needs.check.outputs.refresh == 'true'
+    runs-on: windows-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Время начала
+        id: start
+        shell: pwsh
+        run: echo "at=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_OUTPUT
+
+      # Прошлый пакет — основа: если какой-то источник сейчас недоступен, его данные остаются прошлыми, а не пропадают.
+      - name: Прошлый пакет данных
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          gh release download data -R $env:GITHUB_REPOSITORY -p data-patch.zip -p data-heroes.zip -p data-meta.json -D prev
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Expand-Archive prev/data-heroes.zip -DestinationPath data -Force
+          Expand-Archive prev/data-patch.zip -DestinationPath data -Force
+
+      - name: Сборка DataTool
+        run: dotnet build tools/DataTool -c Release
+
+      - name: Данные OpenDota / Steam CDN
+        id: fetch
+        continue-on-error: true
+        run: dotnet run --project tools/DataTool -c Release --no-build -- fetch --out data
+
+      - name: Данные STRATZ
+        continue-on-error: true
+        env:
+          STRATZ_TOKEN: ${{ secrets.STRATZ_TOKEN }}
+        run: dotnet run --project tools/DataTool -c Release --no-build -- fetch-stratz --out data
+
+      - name: Есть ли что публиковать
+        shell: pwsh
+        run: |
+          if (-not (Test-Path data/patch/meta.json) -or -not (Test-Path data/heroes/heroes.json)) { Write-Error "Нет данных: источники недоступны и прошлого пакета нет"; exit 1 }
+          $stratzFresh = $false
+          if (Test-Path data/patch/stratz_meta.json) {
+            $s = Get-Content data/patch/stratz_meta.json -Raw | ConvertFrom-Json
+            $stratzFresh = ([DateTimeOffset]$s.fetchedAt).ToUnixTimeSeconds() -ge ${{ steps.start.outputs.at }} -and $s.matchupSource
+          }
+          if ("${{ steps.fetch.outcome }}" -ne "success" -and -not $stratzFresh) { Write-Error "Ни OpenDota, ни STRATZ не дали свежих данных — пакет не обновляется"; exit 1 }
+          if ("${{ steps.fetch.outcome }}" -ne "success") { Write-Host "::warning::OpenDota недоступен — статистика OpenDota из прошлого пакета" }
+          if (-not $stratzFresh) { Write-Host "::warning::STRATZ не дал свежих данных — STRATZ из прошлого пакета (если был)" }
+
+      - name: Сборка пакета
+        run: dotnet run --project tools/DataTool -c Release --no-build -- pack --data data --out pack --prev prev/data-meta.json
+
+      - name: Публикация в релиз «data»
+        shell: pwsh
+        run: |
+          gh release view data -R $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create data -R $env:GITHUB_REPOSITORY --prerelease --latest=false --target $env:GITHUB_SHA `
+              --title "Данные меты (обновляются автоматически)" `
+              --notes "Статистика для Dota Draft Assistant. Программа скачивает её сама; устанавливать вручную не нужно."
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          # Сначала архивы, описание последним: приложение не увидит новое описание раньше архивов.
+          gh release upload data pack/data-patch.zip pack/data-heroes.zip --clobber -R $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          gh release upload data pack/data-meta.json --clobber -R $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-Content pack/data-meta.json | Select-Object -First 4

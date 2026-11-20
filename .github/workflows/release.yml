@@ -9,8 +9,7 @@ on:
   push:
     branches: [main]
   workflow_dispatch:          # кнопка "Run workflow" во вкладке Actions
-  schedule:
-    - cron: '0 5 * * 3'       # раз в неделю: свежая статистика патча → новая версия → автообновление у всех
+  # Статистика меты обновляется отдельно (data.yml → релиз «data»), без новой версии программы.
 
 permissions:
   contents: write
@@ -36,15 +35,30 @@ jobs:
       - name: Тесты
         run: dotnet test -c Release
 
-      # Статистика патча обновляется раз в неделю: обычные обновления кода берут её из кэша
-      # и не упираются в лимиты OpenDota.
+      # Данные берутся из пакета, который собирает data.yml (релиз «data»): так сборка не опрашивает
+      # OpenDota/STRATZ (у STRATZ лимит — 2 IP за 15 минут) и в установщик попадает самая свежая мета.
+      - name: Данные меты из релиза «data»
+        id: pack
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download data -R ${{ github.repository }} -p data-patch.zip -p data-heroes.zip -D pack
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Expand-Archive pack/data-heroes.zip -DestinationPath data -Force
+          Expand-Archive pack/data-patch.zip -DestinationPath data -Force
+
+      # Запасной путь, пока пакета нет (самый первый запуск): данные собираются здесь же.
       - name: Неделя для кэша данных
+        if: steps.pack.outcome != 'success'
         id: week
         shell: pwsh
         run: echo "key=$(Get-Date -UFormat '%Y-w%V')" >> $env:GITHUB_OUTPUT
 
       - name: Кэш данных героев и патча
         id: datacache
+        if: steps.pack.outcome != 'success'
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -55,7 +69,7 @@ jobs:
 
       - name: Данные героев и патча (OpenDota / Steam CDN)
         id: fetch
-        if: steps.datacache.outputs.cache-hit != 'true'
+        if: steps.pack.outcome != 'success' && steps.datacache.outputs.cache-hit != 'true'
         # Если OpenDota недоступен, а данные прошлой недели есть — релиз собирается на них (проверка ниже).
         continue-on-error: true
         run: dotnet run --project tools/DataTool -c Release -- fetch --out data
@@ -64,6 +78,7 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path data/patch/meta.json)) { Write-Error "Нет данных патча: OpenDota недоступен и кэша нет"; exit 1 }
+          if ("${{ steps.pack.outcome }}" -eq "success") { Write-Host "Данные из релиза data:"; Get-Content data/patch/pack.json; exit 0 }
           if ("${{ steps.fetch.outcome }}" -eq "failure") { Write-Host "::warning::OpenDota недоступен — используются данные из кэша" }
 
       - name: Сохранить свежие данные в кэш
@@ -79,6 +94,7 @@ jobs:
       # Все запросы идут из одной сборки: STRATZ пускает токен максимум с 2 IP за 15 минут.
       - name: Кэш данных STRATZ
         id: stratzcache
+        if: steps.pack.outcome != 'success'
         uses: actions/cache/restore@v4
         with:
           path: data/patch/stratz_*.json
@@ -87,7 +103,7 @@ jobs:
 
       - name: Данные STRATZ
         id: stratz
-        if: steps.stratzcache.outputs.cache-hit != 'true'
+        if: steps.pack.outcome != 'success' && steps.stratzcache.outputs.cache-hit != 'true'
         continue-on-error: true
         env:
           STRATZ_TOKEN: ${{ secrets.STRATZ_TOKEN }}
