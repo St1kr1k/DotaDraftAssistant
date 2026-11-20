@@ -203,7 +203,7 @@ public partial class App : System.Windows.Application
         _pipeline.SnapshotUpdated += (_, snapshot) => Dispatcher.InvokeAsync(() => OnSnapshot(snapshot));
 
         _positionTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _positionTimer.Tick += (_, _) => { UpdatePopupVisibility(); PositionPopup(); UpdatePredictions(); };
+        _positionTimer.Tick += (_, _) => { UpdatePopupVisibility(); PositionPopup(); UpdatePredictions(); ExitIfGameClosed(); };
         _positionTimer.Start();
 
         _ = Task.Run(() => _pipeline.RunAsync(_cts.Token));
@@ -271,7 +271,7 @@ public partial class App : System.Windows.Application
     private void UpdatePredictions()
     {
         var s = _lastSnapshot;
-        bool inDraft = s?.State.Phase is DraftPhase.DraftDetected or DraftPhase.BanPhase or DraftPhase.PickPhase;
+        bool inDraft = s is { DraftConfirmed: true } && s.State.Phase is DraftPhase.DraftDetected or DraftPhase.BanPhase or DraftPhase.PickPhase;
         var window = _capture.FindGameWindow();
         if (!_settings.Current.Overlay.ShowEnemyPredictions || _userHidden || s is null || !inDraft ||
             s.Status != PipelineStatus.Observing || _detector.CurrentGrid is not { } grid ||
@@ -310,6 +310,31 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private bool _gameSeen;
+    private DateTimeOffset? _gameGoneSince;
+
+    /// <summary>
+    /// Dota закрылась — закрываемся и мы (скачанное обновление при этом установится само).
+    /// Только если игра была запущена при работающей программе: запуск программы до игры её не закрывает.
+    /// </summary>
+    private void ExitIfGameClosed()
+    {
+        bool running;
+        try
+        {
+            var found = System.Diagnostics.Process.GetProcessesByName("dota2");
+            running = found.Length > 0;
+            foreach (var p in found) p.Dispose();
+        }
+        catch (Exception) { return; }
+        if (running) { _gameSeen = true; _gameGoneSince = null; return; }
+        if (!_gameSeen || !_settings.Current.Overlay.ExitWithGame || _popup.IsMoveMode) return;
+        _gameGoneSince ??= DateTimeOffset.Now;
+        if (DateTimeOffset.Now - _gameGoneSince < TimeSpan.FromSeconds(10)) return;
+        _log.Info("Dota 2 закрыта — программа закрывается вместе с ней");
+        Shutdown();
+    }
+
     /// <summary>План виден после вашего пика до конца драфта и ещё PlanLingerSeconds после него.</summary>
     private bool PlanVisible() =>
         _plan is not null && _settings.Current.Overlay.ShowPlan &&
@@ -338,7 +363,8 @@ public partial class App : System.Windows.Application
         else
         {
             var phase = s.State.Phase;
-            bool inDraft = phase is DraftPhase.DraftDetected or DraftPhase.BanPhase or DraftPhase.PickPhase;
+            // Только подтверждённый драфт (есть бан или пик): цветные полоски игроков бывают и в лобби.
+            bool inDraft = s.DraftConfirmed && phase is DraftPhase.DraftDetected or DraftPhase.BanPhase or DraftPhase.PickPhase;
             show = _settings.Current.Overlay.ShowMode == PopupShowMode.WholeDraft
                 ? inDraft
                 : inDraft && !s.OwnHeroPicked;

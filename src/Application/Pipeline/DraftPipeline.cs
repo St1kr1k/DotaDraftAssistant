@@ -42,6 +42,12 @@ public sealed record DraftSnapshot(
     /// <summary>План на игру после вашего пика (null — герой ещё не выбран или не определён).</summary>
     public GamePlan? Plan { get; init; }
 
+    /// <summary>
+    /// Драфт подтверждён: уже есть бан или пик (или GSI говорит «выбор героев»). До этого окошко не показывается —
+    /// цветные полоски игроков бывают и в лобби, а там подсказки не нужны.
+    /// </summary>
+    public bool DraftConfirmed { get; init; }
+
     /// <summary>Ники игроков под слотами, прочитанные с экрана драфта.</summary>
     public IReadOnlyDictionary<SlotId, string> PlayerNames { get; init; } = new Dictionary<SlotId, string>();
 }
@@ -74,6 +80,20 @@ public sealed class DraftPipeline
     private readonly IAppLog _log;
     private readonly DraftStateTracker _tracker;
     private readonly DraftStateMachine _machine;
+
+    /// <summary>
+    /// Сколько слотов пиков может быть занято, когда драфт только замечен. Настоящий драфт начинается с пустых
+    /// (запас — на ошибку распознавания и на запуск программы в первые секунды пиков).
+    /// </summary>
+    public const int MaxOccupiedAtDraftStart = 2;
+
+    /// <summary>
+    /// После драфта идёт игра, и её верхняя панель похожа на драфт. Пока панель видна (и ещё столько же после),
+    /// новый драфт по картинке не начинается — только по GSI «выбор героев».
+    /// </summary>
+    public static readonly TimeSpan GameLockAfterSeen = TimeSpan.FromSeconds(90);
+    private DateTimeOffset _gameLockUntil = DateTimeOffset.MinValue;
+    private bool _draftConfirmed;
 
     private PatchData _patch = PatchData.Empty;
     private volatile bool _recommendationsDirty = true;
@@ -179,14 +199,26 @@ public sealed class DraftPipeline
         var hint = FreshHint();
         var external = hint?.State ?? ExternalGameState.Unknown;
 
-        // Во время самой игры полоска героев сверху похожа на экран драфта. Это не драфт, если:
-        // GSI говорит, что идёт игра, или «драфт» появился сразу почти со всеми выбранными героями.
+        // Во время самой игры полоска героев сверху похожа на экран драфта, а в лобби видны цветные полоски игроков.
+        // Это не драфт, если:
+        //  • GSI работает и говорит, что выбора героев нет (игра, стратегия, меню, лобби) — GSI главнее картинки;
+        //  • новый «драфт» появился сразу с занятыми слотами: настоящий драфт начинается с пустых слотов,
+        //    а в игре слоты заняты героями (даже если часть из них не распознана — мертвы, затемнены).
+        //  • недавно закончился драфт или была видна игровая панель — идёт игра (блокировка продлевается, пока панель видна).
+        //    Наведённые (затемнённые) герои в начале драфта не считаются: распознаются только выбранные.
+        var now = DateTimeOffset.UtcNow;
+        if (_machine.Phase == DraftPhase.Completed || external is ExternalGameState.PostDraft or ExternalGameState.InGame)
+            _gameLockUntil = now + GameLockAfterSeen;
         if (observation.DraftScreenVisible)
         {
-            int rawPicks = observation.Slots.Count(s => s.Slot.Kind == SlotKind.Pick && s.Content == ObservedContent.Hero);
+            int heroes = observation.Slots.Count(s => s.Slot.Kind == SlotKind.Pick && s.Content == ObservedContent.Hero);
+            bool idle = _machine.Phase == DraftPhase.Idle;
+            bool gsiDraft = external == ExternalGameState.HeroSelection;
             bool inGame = external == ExternalGameState.InGame
-                          || (_machine.Phase == DraftPhase.Idle && (rawPicks >= 8 || external == ExternalGameState.PostDraft));
-            if (inGame) observation = observation with { DraftScreenVisible = false };
+                          || (idle && !gsiDraft && (heroes > MaxOccupiedAtDraftStart || now < _gameLockUntil));
+            bool gsiSaysNoDraft = idle && hint is not null && !gsiDraft;
+            if (inGame) _gameLockUntil = now + GameLockAfterSeen;
+            if (inGame || gsiSaysNoDraft) observation = observation with { DraftScreenVisible = false };
         }
 
         bool slotsChanged = false;
@@ -217,6 +249,7 @@ public sealed class DraftPipeline
             _mySlotCandidate = null;
             _baselineScores = new Dictionary<int, double>();
             _currentScores = new Dictionary<int, double>();
+            _draftConfirmed = false;
             if (observation.DraftScreenVisible) _tracker.Update(observation.Slots);
             slots = _tracker.Slots;
         }
@@ -241,10 +274,16 @@ public sealed class DraftPipeline
 
         LogDraftChanges(state, sideSource, hint, slotsChanged || transition is not null);
 
+        bool confirmedNow = _machine.Phase != DraftPhase.Idle &&
+                            (picks > 0 || bans > 0 || _chatBans.Count > 0 || external == ExternalGameState.HeroSelection);
+        bool confirmChanged = confirmedNow && !_draftConfirmed;
+        if (confirmChanged) _draftConfirmed = true;
+        if (_machine.Phase == DraftPhase.Idle) _draftConfirmed = false;
+
         bool sideChanged = _last?.State.MySide != side;
         bool ownPickedChanged = _last is not null && _last.OwnHeroPicked != OwnHeroPicked(state, hint);
         bool changed = slotsChanged || transition is not null || sideChanged || _recommendationsDirty
-                       || _last?.Status != status || ownPickedChanged || textChanged;
+                       || _last?.Status != status || ownPickedChanged || textChanged || confirmChanged;
         if (changed)
             Publish(state, status, message, sideSource, observation.ScreenConfidence, force: true);
     }
@@ -423,7 +462,7 @@ public sealed class DraftPipeline
         bool ownPicked = OwnHeroPicked(state, FreshHint());
         var plan = ownPicked ? BuildPlan(state, position, profile) : null;
         _last = new DraftSnapshot(status, message, state, sideSource, recs, enemyRoles, _patch, screenConfidence, ownPicked,
-                                  position, fromDraft) { Plan = plan, PlayerNames = new Dictionary<SlotId, string>(_playerNames) };
+                                  position, fromDraft) { Plan = plan, PlayerNames = new Dictionary<SlotId, string>(_playerNames), DraftConfirmed = _draftConfirmed };
         SnapshotUpdated?.Invoke(this, _last);
     }
 

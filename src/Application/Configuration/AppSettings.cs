@@ -191,6 +191,8 @@ public sealed class OverlayOptions
     /// Выключено по умолчанию.
     /// </summary>
     public bool ShowEnemyPredictions { get; set; }
+    /// <summary>Закрываться вместе с Dota 2 (если игра была запущена, пока работала программа).</summary>
+    public bool ExitWithGame { get; set; } = true;
 }
 
 public sealed class GsiOptions
