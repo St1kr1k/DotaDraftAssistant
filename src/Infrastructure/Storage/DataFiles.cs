@@ -94,6 +94,10 @@ public sealed class StratzMetaDto
     public string MatchupSource { get; set; } = "";
     public string PairSource { get; set; } = "";
     public string LaneSource { get; set; } = "";
+    /// <summary>Текущая версия игры по STRATZ (например 7.41f), если винрейты взяты по патчу.</summary>
+    public string GameVersion { get; set; } = "";
+    /// <summary>Откуда винрейты героев (hero_stats.json): пусто — OpenDota.</summary>
+    public string HeroStatsSource { get; set; } = "";
 }
 
 public sealed class HeroStatsDto

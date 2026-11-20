@@ -48,8 +48,66 @@ internal static class StratzFetcher
             Console.WriteLine($"--- {RankBrackets.Title(rank)} ---");
             await FetchBracket(http, heroIds, patchDir, RankBrackets.Stratz(rank), meta);
         }
+        try { await FetchPatchWinrates(http, heroIds, patchDir, meta); }
+        catch (Exception ex) { Console.Error.WriteLine($"STRATZ винрейты патча не получены: {ex.Message}"); }
         await Save(patchDir, "stratz_meta.json", meta);
         return 0;
+    }
+
+    /// <summary>Бракеты STRATZ (RankBracket) в порядке бракетов OpenDota 1..8.</summary>
+    private static readonly string[] SingleBrackets = ["HERALD", "GUARDIAN", "CRUSADER", "ARCHON", "LEGEND", "ANCIENT", "DIVINE", "IMMORTAL"];
+
+    /// <summary>
+    /// Винрейт и пики героев строго за текущий патч (STRATZ winGameVersion) по каждому рангу —
+    /// заменяют в hero_stats.json статистику OpenDota, которая считается за последние недели и смешивает патчи.
+    /// Если по последней версии игр ещё мало (патч только вышел), добавляется предыдущая.
+    /// </summary>
+    private static async Task FetchPatchWinrates(HttpClient http, List<int> heroIds, string patchDir, StratzMetaDto meta)
+    {
+        var sb = new StringBuilder("{ constants { gameVersions { id name } } heroStats {");
+        for (int i = 0; i < SingleBrackets.Length; i++)
+            sb.Append($" b{i + 1}: winGameVersion(bracketIds: [{SingleBrackets[i]}], take: 20000) {{ gameVersionId heroId winCount matchCount }}");
+        sb.Append(" } }");
+        var data = await Query(http, sb.ToString());
+
+        var names = (data?["constants"]?["gameVersions"] as JsonArray ?? [])
+            .OfType<JsonObject>().ToDictionary(v => Int(v["id"]), v => v["name"]?.GetValue<string>() ?? "?");
+        var rows = new List<(int Bracket, int Version, int Hero, int Wins, int Games)>();
+        for (int b = 1; b <= SingleBrackets.Length; b++)
+            foreach (var r in (data?["heroStats"]?[$"b{b}"] as JsonArray ?? []).OfType<JsonObject>())
+                rows.Add((b, Int(r["gameVersionId"]), Int(r["heroId"]), Int(r["winCount"]), Int(r["matchCount"])));
+        if (rows.Count == 0) { Console.WriteLine("STRATZ винрейты патча: пусто"); return; }
+
+        // Версии от новой к старой, пока у типичного героя не наберётся достаточно игр.
+        var versions = rows.Select(r => r.Version).Distinct().OrderByDescending(v => v).ToList();
+        var used = new List<int>();
+        foreach (var v in versions)
+        {
+            used.Add(v);
+            var perHero = rows.Where(r => used.Contains(r.Version)).GroupBy(r => r.Hero).Select(g => g.Sum(r => r.Games)).OrderBy(x => x).ToList();
+            int median = perHero.Count > 0 ? perHero[perHero.Count / 2] : 0;
+            if (median >= 3000 || used.Count >= 3) break;
+        }
+        var chosen = rows.Where(r => used.Contains(r.Version)).ToList();
+        int covered = chosen.Select(r => r.Hero).Distinct().Count(heroIds.Contains);
+        string versionNames = string.Join(" + ", used.Select(v => names.GetValueOrDefault(v, v.ToString())));
+        Console.WriteLine($"STRATZ винрейты патча: версии {versionNames}, героев {covered}/{heroIds.Count}, игр {chosen.Sum(r => r.Games) / 10}");
+        if (covered < heroIds.Count * 0.9) { Console.WriteLine("  мало героев — оставляю статистику OpenDota"); return; }
+
+        var stats = heroIds.Select(id => new HeroStatsDto
+        {
+            HeroId = id,
+            Brackets = Enumerable.Range(1, SingleBrackets.Length).ToDictionary(
+                b => b.ToString(),
+                b => new BracketDto
+                {
+                    Picks = chosen.Where(r => r.Hero == id && r.Bracket == b).Sum(r => r.Games),
+                    Wins = chosen.Where(r => r.Hero == id && r.Bracket == b).Sum(r => r.Wins),
+                }),
+        }).ToList();
+        await Save(patchDir, "hero_stats.json", stats);
+        meta.GameVersion = names.GetValueOrDefault(used[0], "");
+        meta.HeroStatsSource = $"STRATZ винрейт за патч {versionNames} (по рангам)";
     }
 
     private static async Task FetchBracket(HttpClient http, List<int> heroIds, string patchDir, string bracket, StratzMetaDto meta)

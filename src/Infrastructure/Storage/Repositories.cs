@@ -128,11 +128,12 @@ public sealed class LocalPatchDataProvider(string dataDir, IAppLog log) : IPatch
 
             return new PatchData
             {
-                PatchName = meta.Patch,
+                // STRATZ знает точную версию игры (с буквой), OpenDota — только номер и иногда раньше времени.
+                PatchName = string.IsNullOrEmpty(stratz.GameVersion) ? meta.Patch : stratz.GameVersion,
                 Rank = rank,
                 // Пакет данных может быть свежее meta.json (например, обновился только STRATZ).
                 FetchedAt = Read<PackMetaDto>(Path.Combine(dir, DataPackStore.PackFile))?.FetchedAt ?? meta.FetchedAt,
-                Source = meta.Source,
+                Source = string.IsNullOrEmpty(stratz.HeroStatsSource) ? meta.Source : stratz.HeroStatsSource,
                 MatchupSource = Join(meta.MatchupSource, stratz.MatchupSource),
                 PositionSource = Join(meta.PositionSource, stratz.PositionSource),
                 PairSource = Join(meta.PairSource, stratz.PairSource),
