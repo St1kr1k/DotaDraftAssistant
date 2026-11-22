@@ -152,6 +152,16 @@ public sealed class DraftPipeline
     /// </summary>
     public void ReloadPatchData() => _patchReloadPending = true;
 
+    private void ReloadPatchNow()
+    {
+        _patchReloadPending = false;
+        var rank = _profile().Rank;
+        _patch = _patchProvider.Load(rank);
+        _recommendationsDirty = true;
+        _log.Info($"Patch data {_patch.PatchName} ({_patch.FetchedAt:u}) для ранга {rank}: matchups={_patch.Matchups.Count}, positions={_patch.Positions.Count}");
+        PatchDataChanged?.Invoke(this, _patch);
+    }
+
     /// <summary>Профиль или веса изменились — пересчитать рекомендации на следующем кадре.</summary>
     public void InvalidateRecommendations() => _recommendationsDirty = true;
 
@@ -188,6 +198,10 @@ public sealed class DraftPipeline
     /// <summary>Один шаг pipeline. Публичный — для тестов и отладочных инструментов.</summary>
     public void Tick()
     {
+        // Свежие данные меты подключаются сразу, если драфт не идёт (даже когда Dota закрыта).
+        if (_patchReloadPending && (_last is null || _last.State.ConfirmedPickCount == 0))
+            ReloadPatchNow();
+
         var observation = _detector.Observe();
         if (observation is null)
         {
@@ -423,16 +437,8 @@ public sealed class DraftPipeline
 
         var (position, fromDraft) = EffectivePosition(state);
         var profile = _profile();
-        bool reload = _patchReloadPending && state.ConfirmedPickCount == 0;
-        if (profile.Rank != _patch.Rank || reload)
-        {
-            // Пользователь сменил ранг — статистика другой группы рангов; или скачаны свежие данные меты.
-            if (reload) _patchReloadPending = false;
-            _patch = _patchProvider.Load(profile.Rank);
-            _recommendationsDirty = true;
-            _log.Info($"Patch data {_patch.PatchName} ({_patch.FetchedAt:u}) для ранга {profile.Rank}: matchups={_patch.Matchups.Count}, positions={_patch.Positions.Count}");
-            PatchDataChanged?.Invoke(this, _patch);
-        }
+        if (profile.Rank != _patch.Rank || (_patchReloadPending && state.ConfirmedPickCount == 0))
+            ReloadPatchNow(); // сменился ранг — статистика другой группы рангов; или скачаны свежие данные меты
         if (profile.MyPosition != position)
         {
             profile = profile.Clone();

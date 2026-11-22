@@ -151,14 +151,12 @@ public sealed class DataPackUpdater(DataPackStore store, string repoUrl, IAppLog
         }
     }
 
-    /// <summary>Фоновая проверка каждые 3 часа (первая — через 3 часа: при запуске проверка уже была).</summary>
+    /// <summary>Фоновая проверка: сразу при запуске, затем каждые 3 часа.</summary>
     public async Task RunAsync(string currentPatchRoot, IReadOnlySet<int> currentHeroIds, CancellationToken ct)
     {
         var known = new HashSet<int>(currentHeroIds);
         while (!ct.IsCancellationRequested)
         {
-            try { await Task.Delay(TimeSpan.FromHours(3), ct).ConfigureAwait(false); }
-            catch (TaskCanceledException) { return; }
             try
             {
                 var r = await CheckOnceAsync(currentPatchRoot, known, ct).ConfigureAwait(false);
@@ -179,6 +177,8 @@ public sealed class DataPackUpdater(DataPackStore store, string repoUrl, IAppLog
             {
                 log.Warn($"Обновление данных меты не удалось: {ex.Message}");
             }
+            try { await Task.Delay(TimeSpan.FromHours(3), ct).ConfigureAwait(false); }
+            catch (TaskCanceledException) { return; }
         }
     }
 

@@ -67,14 +67,14 @@ public sealed class HeroesViewModel : ObservableObject
 {
     private readonly ProfileStore _profile;
     private readonly IRoleInferenceService _roles;
-    private readonly PatchData _patch;
+    private readonly Func<PatchData> _patch;
     private readonly HeroImages _images;
     private readonly List<HeroTile> _tiles;
     private string _search = "";
     private RoleFilter _role;
     private HeroTile? _hovered;
 
-    public HeroesViewModel(IHeroRepository heroes, ProfileStore profile, IRoleInferenceService roles, PatchData patch, HeroImages images)
+    public HeroesViewModel(IHeroRepository heroes, ProfileStore profile, IRoleInferenceService roles, Func<PatchData> patch, HeroImages images)
     {
         _profile = profile;
         _roles = roles;
@@ -166,7 +166,7 @@ public sealed class HeroesViewModel : ObservableObject
     {
         get
         {
-            if (_hovered is null || !_patch.HeroStats.TryGetValue(_hovered.Hero.Id, out var s)) return "нет данных";
+            if (_hovered is null || !_patch().HeroStats.TryGetValue(_hovered.Hero.Id, out var s)) return "нет данных";
             var sum = s.Sum([5, 6, 7, 8]);
             return sum.Picks > 0 ? $"{(double)sum.Wins / sum.Picks:P1}" : "нет данных";
         }

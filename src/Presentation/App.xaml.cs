@@ -71,18 +71,8 @@ public partial class App : System.Windows.Application
         // Свежая статистика меты скачивается отдельно от версий программы (релиз «data»):
         // герои/портреты и статистика берутся из самого подходящего пакета, а встроенные данные — запасной вариант.
         var packs = new DataPackStore(dataDir, Path.Combine(userDir, "data"), _log);
-        // Свежая мета скачивается ДО загрузки данных: тогда и подсказки, и страница героев сразу на новых данных.
+        // Свежая мета качается в фоне (окно не ждёт сети) и подключается, как только скачалась.
         var dataUpdater = AppUpdater.RepoUrl is { } repoUrl ? new DataPackUpdater(packs, repoUrl, _log) : null;
-        if (dataUpdater is not null)
-        {
-            try
-            {
-                var check = Task.Run(() => dataUpdater.CheckOnceAsync(
-                    packs.ResolvePatchRoot(), DataPackStore.HeroIds(packs.ResolveHeroesRoot()), _cts.Token));
-                if (!check.Wait(TimeSpan.FromSeconds(20))) _log.Warn("Свежие данные меты не успели скачаться — пока старые");
-            }
-            catch (Exception ex) { _log.Warn($"Свежие данные меты не получены: {ex.GetBaseException().Message}"); }
-        }
         var heroesDir = packs.ResolveHeroesRoot();
         var patchDir = packs.ResolvePatchRoot();
         packs.Cleanup(heroesDir, patchDir);
@@ -198,7 +188,7 @@ public partial class App : System.Windows.Application
         _mainVm = new MainViewModel { VersionText = $"v{AppUpdater.CurrentVersion}", PatchText = MainViewModel.PatchLine(patch, $"v{AppUpdater.CurrentVersion}") };
         _main = new MainWindow(
             _mainVm,
-            new HeroesPage(new HeroesViewModel(heroes, _profile, roles, patch, images)),
+            new HeroesPage(new HeroesViewModel(heroes, _profile, roles, () => _pipeline.Patch is { PatchName: not "unknown" } p ? p : patch, images)),
             new PositionPage(new PositionViewModel(_profile, heroes, roles)),
             new OverlayPage(overlayVm),
             new SetupPage(detector, _layout, _gsi, _settings, _profile, debugDir, OpenCalibration, _steamName));
@@ -235,11 +225,11 @@ public partial class App : System.Windows.Application
             {
                 patchProvider.DataDir = dir;
                 _pipeline.ReloadPatchData();
-                Dispatcher.InvokeAsync(() =>
-                {
-                    _mainVm.UpdateText = $"Скачана свежая мета ({pack.Patch}) — подключится к следующему драфту";
-                });
             };
+            _pipeline.PatchDataChanged += (_, p) => Dispatcher.InvokeAsync(() =>
+            {
+                _mainVm.PatchText = MainViewModel.PatchLine(p, _mainVm.VersionText);
+            });
             dataUpdater.NewHeroesDownloaded += _ => Dispatcher.InvokeAsync(() =>
             {
                 _mainVm.UpdateText = "Скачаны новые герои — перезапустите программу, чтобы она их узнавала";
