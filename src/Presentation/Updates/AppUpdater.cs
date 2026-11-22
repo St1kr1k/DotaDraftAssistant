@@ -55,12 +55,35 @@ public sealed class AppUpdater(IAppLog log)
         }
     }
 
+    /// <summary>
+    /// Запасной канал: файлы последнего релиза по прямым ссылкам (github.com/…/releases/latest/download/…).
+    /// GitHub API пускает без авторизации 60 запросов в час на IP — у провайдеров, где один IP на многих,
+    /// лимит быстро кончается («нет связи с GitHub»), а прямые ссылки работают.
+    /// </summary>
+    private UpdateManager? _fallback;
+
+    private async Task<UpdateInfo?> CheckWithFallbackAsync()
+    {
+        try
+        {
+            return await _manager!.CheckForUpdatesAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"GitHub API недоступен ({ex.Message}) — проверяю по прямой ссылке");
+            _fallback ??= new UpdateManager(new SimpleWebSource($"{RepoUrl!.TrimEnd('/')}/releases/latest/download"));
+            var update = await _fallback.CheckForUpdatesAsync().ConfigureAwait(false);
+            _manager = _fallback;
+            return update;
+        }
+    }
+
     private async Task CheckOnceAsync()
     {
         try
         {
             StatusChanged?.Invoke("Обновления: проверка…", false);
-            var update = await _manager!.CheckForUpdatesAsync().ConfigureAwait(false);
+            var update = await CheckWithFallbackAsync().ConfigureAwait(false);
             if (update is null)
             {
                 StatusChanged?.Invoke("Последняя версия", false);
@@ -79,8 +102,8 @@ public sealed class AppUpdater(IAppLog log)
         }
         catch (Exception ex)
         {
-            log.Warn($"Проверка обновлений не удалась: {ex.Message}");
-            StatusChanged?.Invoke("Обновления: нет связи с GitHub", false);
+            log.Warn($"Проверка обновлений не удалась: {ex}");
+            StatusChanged?.Invoke("Обновления: нет связи с GitHub (подробности в логе)", false);
         }
     }
 
