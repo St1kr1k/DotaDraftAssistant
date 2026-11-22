@@ -28,7 +28,8 @@ public class RecommendationServiceTests
 
     private static RecommendationService Service(ScoringOptions? o = null, StatsRoleInference? positions = null)
     {
-        o ??= new ScoringOptions();
+        // Эти тесты сравнивают оценки любых героев; режим «только мои герои» проверяется отдельно.
+        o ??= new ScoringOptions { PoolOnly = false };
         IHeroEvaluator[] evaluators =
         [
             new CounterEvaluator(() => o),
@@ -103,7 +104,7 @@ public class RecommendationServiceTests
         var profile = new PlayerProfile { MyPosition = Position.Offlane, Preferences = { [Mars.Id] = HeroPreference.Main } };
 
         // Если пользователь сам выставит Comfort огромным весом, а Counter обнулит — порядок меняется.
-        var o = new ScoringOptions();
+        var o = new ScoringOptions { PoolOnly = false };
         o.SetWeight(ScoreComponent.Counter, 0);
         o.SetWeight(ScoreComponent.Lane, 0);
         o.SetWeight(ScoreComponent.Comfort, 100);
@@ -252,5 +253,31 @@ public class RecommendationServiceTests
         var state = new DraftState(DraftPhase.DraftDetected, [], null, DateTimeOffset.UtcNow);
         Assert.True(Service().Evaluate(Axe.Id, state, low, patch)!.Components[ScoreComponent.Meta].Value > 0);
         Assert.True(Service().Evaluate(Axe.Id, state, high, patch)!.Components[ScoreComponent.Meta].Value < 0);
+    }
+
+    [Fact]
+    public void Pool_only_picks_best_of_my_heroes_excluding_unavailable()
+    {
+        // Мои герои: Axe, Mars и уже выбранный союзником Picked. Axe контрит врага лучше Mars.
+        var patch = Patch(
+            new MatchupStats(Mars.Id, EnemyCore.Id, 2000, 900),
+            new MatchupStats(Axe.Id, EnemyCore.Id, 2000, 1150),
+            new MatchupStats(Sniper.Id, EnemyCore.Id, 2000, 1300));
+        var profile = new PlayerProfile
+        {
+            MyPosition = Position.Offlane,
+            Preferences = { [Mars.Id] = HeroPreference.Main, [Axe.Id] = HeroPreference.Comfort, [Picked.Id] = HeroPreference.Comfort },
+        };
+        var recs = Service(new ScoringOptions()).Recommend(State(), profile, patch, 10);
+
+        Assert.Equal([Axe.Id, Mars.Id], recs.Select(r => r.Hero.Id).ToArray()); // Sniper не мой, Picked занят
+    }
+
+    [Fact]
+    public void Pool_only_without_marked_heroes_uses_all_heroes()
+    {
+        var profile = new PlayerProfile { MyPosition = Position.Offlane };
+        var recs = Service(new ScoringOptions()).Recommend(State(), profile, Patch(), 10);
+        Assert.True(recs.Count > 2);
     }
 }

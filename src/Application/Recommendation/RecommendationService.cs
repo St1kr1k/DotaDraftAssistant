@@ -30,6 +30,8 @@ public interface IRecommendationService
 ///
 /// Если есть статистика позиций, герои, которых на вашей позиции почти не играют
 /// (меньше MinPositionShare их игр), не предлагаются — даже если они отмечены ★/♥.
+///
+/// По умолчанию (PoolOnly) кандидаты — только ваши герои (★/♥), не забаненные и не выбранные.
 /// </summary>
 public sealed class RecommendationService(
     IHeroRepository heroes,
@@ -63,16 +65,28 @@ public sealed class RecommendationService(
         var o = options();
         var w = WeightsFor(o, context.Enemies.Count);
 
-        return heroes.All
+        var candidates = heroes.All
             .Where(h => !unavailable.Contains(h.Id))
             .Where(h => profile.GetPreference(h.Id) != HeroPreference.HardAvoid)
             .Where(h => PlayedOnPosition(h, profile, o.MinPositionShare))
+            .ToList();
+        // Главный режим: выбор из ваших героев — кто из них лучше всего ложится против врагов и к союзникам.
+        if (o.PoolOnly)
+        {
+            var pool = candidates.Where(h => IsPool(profile.GetPreference(h.Id))).ToList();
+            if (pool.Count > 0) candidates = pool;
+        }
+
+        return candidates
             .Select(h => Score(h, context, w, previousScores))
             .OrderByDescending(r => r.Score)
             .ThenBy(r => r.Hero.LocalizedName, StringComparer.Ordinal)
             .Take(count)
             .ToList();
     }
+
+    /// <summary>Ваш герой: ★ основной или ♥ комфорт.</summary>
+    public static bool IsPool(HeroPreference p) => p is HeroPreference.Main or HeroPreference.Comfort;
 
     public HeroRecommendation? Evaluate(int heroId, DraftState state, PlayerProfile profile, PatchData patch)
     {
