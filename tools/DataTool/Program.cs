@@ -143,6 +143,9 @@ internal static class Program
         Directory.CreateDirectory(patchDir);
         var patches = await GetJson<JsonArray>(http, Q($"{OpenDota}/constants/patch"));
         string patchName = patches?.LastOrDefault()?["name"]?.GetValue<string>() ?? "unknown";
+        DateTimeOffset? patchDate = DateTimeOffset.TryParse(patches?.LastOrDefault()?["date"]?.ToString(),
+            System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var pd) ? pd : null;
+        Console.WriteLine($"Патч {patchName}, вышел {patchDate:u}");
 
         var statsJson = await GetJson<JsonArray>(http, Q($"{OpenDota}/heroStats")) ?? new JsonArray();
         var stats = statsJson.OfType<JsonObject>().Select(s => new HeroStatsDto
@@ -243,6 +246,7 @@ internal static class Program
         var meta = new PatchMetaDto
         {
             Patch = patchName,
+            PatchDate = patchDate,
             FetchedAt = DateTimeOffset.UtcNow,
             Source = "OpenDota heroStats (публичные матчи по бракетам)",
             MatchupSource = "OpenDota /heroes/{id}/matchups",

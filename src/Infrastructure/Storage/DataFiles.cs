@@ -33,6 +33,8 @@ public sealed class HeroDto
 public sealed class PatchMetaDto
 {
     public string Patch { get; set; } = "unknown";
+    /// <summary>Дата выхода патча (OpenDota constants/patch), если известна.</summary>
+    public DateTimeOffset? PatchDate { get; set; }
     public DateTimeOffset FetchedAt { get; set; }
     public string Source { get; set; } = "";
     public string MatchupSource { get; set; } = "";
