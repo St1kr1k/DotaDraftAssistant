@@ -41,7 +41,10 @@ def write_glb(path: str, meshes: list):
     for m in meshes:
         v = np.asarray(m["verts"], dtype=np.float32)
         f = np.asarray(m["faces"], dtype=np.uint32)
-        nrm = compute_normals(v.astype(np.float64), f.astype(np.int64)).astype(np.float32)
+        if m.get("normals") is not None:
+            nrm = np.asarray(m["normals"], dtype=np.float32)
+        else:
+            nrm = compute_normals(v.astype(np.float64), f.astype(np.int64)).astype(np.float32)
         pv = add_view(v.tobytes(), 34962)
         accessors.append({"bufferView": pv, "componentType": 5126, "count": len(v), "type": "VEC3",
                           "min": v.min(axis=0).tolist(), "max": v.max(axis=0).tolist()})

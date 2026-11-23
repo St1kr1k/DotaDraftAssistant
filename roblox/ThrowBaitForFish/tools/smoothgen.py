@@ -124,6 +124,87 @@ def smooth_vertices(v, f, iters=3, lam=0.5):
     return v
 
 
+def sample(vol, pts):
+    """Трилинейная выборка vol в точках pts (координаты сетки)."""
+    shp = np.array(vol.shape) - 1
+    p = np.clip(pts, 0, shp - 1e-6)
+    i0 = np.floor(p).astype(int)
+    f = p - i0
+    out = np.zeros(len(p))
+    for dx in (0, 1):
+        for dy in (0, 1):
+            for dz in (0, 1):
+                w = (f[:, 0] if dx else 1 - f[:, 0]) * (f[:, 1] if dy else 1 - f[:, 1]) * (f[:, 2] if dz else 1 - f[:, 2])
+                ii = np.minimum(i0 + np.array([dx, dy, dz]), shp)
+                out += w * vol[ii[:, 0], ii[:, 1], ii[:, 2]]
+    return out
+
+
+def fill_nearest(grid):
+    g = grid.copy()
+    for _ in range(8):
+        empty = g < 0
+        if not empty.any():
+            break
+        for axis in range(3):
+            for sh in (1, -1):
+                r = np.roll(g, sh, axis=axis)
+                m = (g < 0) & (r >= 0)
+                g[m] = r[m]
+    g[g < 0] = 0
+    return g
+
+
+def cut_by_labels(verts, W, faces):
+    """Режет треугольники по линиям, где меняется самый «сильный» цвет: граница — плавная кривая."""
+    P = [p for p in verts]
+    Wl = [w for w in W]
+    tris = [tuple(t) for t in faces]
+    L = W.shape[1]
+    for li in range(L):
+        Wa = np.array(Wl)
+        others = np.delete(Wa, li, axis=1)
+        f = Wa[:, li] - (others.max(axis=1) if others.shape[1] else 0)
+        cache = {}
+
+        def cut(a, b):
+            key = (a, b) if a < b else (b, a)
+            if key in cache:
+                return cache[key]
+            t = f[a] / (f[a] - f[b])
+            P.append(P[a] + (P[b] - P[a]) * t)
+            Wl.append(Wl[a] + (Wl[b] - Wl[a]) * t)
+            idx = len(P) - 1
+            cache[key] = idx
+            return idx
+
+        out = []
+        for (a, b, c) in tris:
+            sa, sb, sc = f[a] > 0, f[b] > 0, f[c] > 0
+            if sa == sb == sc:
+                out.append((a, b, c))
+                continue
+            # вершина, которая одна на своей стороне
+            if sa != sb and sa != sc:
+                lone, x, y = a, b, c
+            elif sb != sa and sb != sc:
+                lone, x, y = b, c, a
+            else:
+                lone, x, y = c, a, b
+            p = cut(lone, x)
+            q = cut(lone, y)
+            out.append((lone, p, q))
+            out.append((p, x, y))
+            out.append((p, y, q))
+        tris = out
+    return np.array(P), np.array(Wl), np.array(tris, dtype=np.int64)
+
+
+def meshgen_normals(v, f):
+    from glb import compute_normals
+    return compute_normals(v.astype(np.float64), f.astype(np.int64))
+
+
 def build_smooth(d, sigma=0.85):
     g = voxelgen.build(d)
     cells = g.cells
@@ -136,7 +217,10 @@ def build_smooth(d, sigma=0.85):
     occ[tuple((keys - lo).T)] = 1.0
     F = blur(occ, sigma)
     verts, faces = surface_nets(F, 0.42)
-    verts = smooth_vertices(verts, faces, 3, 0.45)
+    # сглаживание Таубина: убирает рябь от слоёв и не «сдувает» модель
+    for _ in range(10):
+        verts = smooth_vertices(verts, faces, 1, 0.5)
+        verts = smooth_vertices(verts, faces, 1, -0.53)
     # развернуть треугольники наружу: нормаль против градиента плотности
     gx, gy, gz = np.gradient(F)
     cent0 = verts[faces].mean(axis=1)
@@ -146,58 +230,40 @@ def build_smooth(d, sigma=0.85):
     nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
     bad = np.einsum("ij,ij->i", nrm, -grad) < 0
     faces[bad] = faces[bad][:, [0, 2, 1]]
-    # цвет треугольника = цвет ближайшего мягкого воксела
-    cent = verts[faces].mean(axis=1)
+    # ===== цвета: плавные поля принадлежности + разрез сетки точно по границе =====
     lab = {}
     names = []
-    color_grid = -np.ones(shape, dtype=np.int64)
+    label_grid = -np.ones(shape, dtype=np.int64)
     for (key, (role, col)) in soft.items():
         name = f"{role}_{col[0]:02x}{col[1]:02x}{col[2]:02x}"
         if name not in lab:
             lab[name] = len(names)
             names.append(name)
-        color_grid[tuple(np.array(key) - lo)] = lab[name]
-    # заполнить пустые клетки рядом с поверхностью цветом соседей
-    for _ in range(4):
-        empty = color_grid < 0
-        if not empty.any():
-            break
-        for axis in range(3):
-            for sh in (1, -1):
-                rolled = np.roll(color_grid, sh, axis=axis)
-                fill = empty & (rolled >= 0)
-                color_grid[fill] = rolled[fill]
-                empty = color_grid < 0
-    # цвет вершин -> сглаживание меток по соседям (ровные границы цвета вместо «зубцов»)
-    vi = np.clip(np.round(verts).astype(int), 0, np.array(shape) - 1)
-    vlab = color_grid[vi[:, 0], vi[:, 1], vi[:, 2]]
-    vlab[vlab < 0] = 0
-    nb = [[] for _ in range(len(verts))]
-    for a, b in ((0, 1), (1, 2), (2, 0)):
-        for x, y in zip(faces[:, a], faces[:, b]):
-            nb[x].append(y)
-            nb[y].append(x)
-    for _ in range(2):
-        new = vlab.copy()
-        for vtx in range(len(verts)):
-            if nb[vtx]:
-                vals, counts = np.unique(vlab[nb[vtx]], return_counts=True)
-                best = vals[counts.argmax()]
-                if counts.max() > len(nb[vtx]) // 2:
-                    new[vtx] = best
-        vlab = new
-    fl = vlab[faces]
-    face_lab = np.where(fl[:, 1] == fl[:, 2], fl[:, 1], fl[:, 0])
-    world = (verts + lo) * g.s
+        label_grid[tuple(np.array(key) - lo)] = lab[name]
+    L = len(names)
+    W = np.zeros((len(verts), L))
+    for li in range(L):
+        field = blur((label_grid == li).astype(np.float64), 1.3)
+        W[:, li] = sample(field, verts)
+    # запасной вариант для вершин, куда не дотянулось ни одно поле
+    weak = W.max(axis=1) < 1e-4
+    if weak.any():
+        vi = np.clip(np.round(verts[weak]).astype(int), 0, np.array(shape) - 1)
+        filled = fill_nearest(label_grid)
+        W[np.where(weak)[0], filled[vi[:, 0], vi[:, 1], vi[:, 2]]] = 1.0
+    P, Wv, tris = cut_by_labels(verts, W, faces)
+    world = (P + lo) * g.s
+    normals = meshgen_normals(world, tris)
+    tlab = Wv[tris].mean(axis=1).argmax(axis=1)
     meshes = []
     for li, name in enumerate(names):
-        sel = faces[face_lab == li]
+        sel = tris[tlab == li]
         if len(sel) == 0:
             continue
         used = np.unique(sel)
         remap = -np.ones(len(world), dtype=np.int64)
         remap[used] = np.arange(len(used))
-        meshes.append({"name": name, "verts": world[used], "faces": remap[sel]})
+        meshes.append({"name": name, "verts": world[used], "faces": remap[sel], "normals": normals[used]})
     # жёсткие кубические детали
     hard = voxelgen.Grid.__new__(voxelgen.Grid)
     hard.res, hard.s = g.res, g.s
