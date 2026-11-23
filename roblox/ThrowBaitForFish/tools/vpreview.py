@@ -19,17 +19,22 @@ class M:
             o.name, o.v, o.f = m["name"], m["verts"].tolist(), m["faces"].tolist()
             self.meshes[m["name"]] = o
 
-preview.role_color = hexcolor
-fish = voxelgen.parse_fish_with_colors()
-only = set(sys.argv[1:])
-if only:
-    fish = [d for d in fish if d["Id"] in only]
-cell, cols = 300, 5
-rows = math.ceil(len(fish) / cols)
-sheet = Image.new("RGB", (cols * cell, rows * (cell + 26)), (255, 255, 255))
-dr = ImageDraw.Draw(sheet)
-for i, d in enumerate(fish):
-    im = preview.render(M(voxelgen.to_model_meshes(voxelgen.build(d))), (), cell, 0.75, -0.35)
-    x, y = (i % cols) * cell, (i // cols) * (cell + 26)
-    sheet.paste(im, (x, y)); dr.text((x + 8, y + cell + 6), d["Id"], fill=(0, 0, 0))
-out = os.path.join(voxelgen.ROOT, "build", "voxel_preview.png"); sheet.save(out); print(out)
+def main():
+    preview.role_color = hexcolor
+    fish = voxelgen.parse_fish_with_colors()
+    only = set(sys.argv[1:])
+    if only:
+        fish = [d for d in fish if d["Id"] in only]
+    cell, cols = 300, 5
+    rows = math.ceil(len(fish) / cols)
+    sheet = Image.new("RGB", (cols * cell, rows * (cell + 26)), (255, 255, 255))
+    dr = ImageDraw.Draw(sheet)
+    for i, d in enumerate(fish):
+        im = preview.render(M(voxelgen.to_model_meshes(voxelgen.build(d))), (), cell, 0.75, -0.35)
+        x, y = (i % cols) * cell, (i // cols) * (cell + 26)
+        sheet.paste(im, (x, y)); dr.text((x + 8, y + cell + 6), d["Id"], fill=(0, 0, 0))
+    out = os.path.join(voxelgen.ROOT, "build", "voxel_preview.png"); sheet.save(out); print(out)
+
+
+if __name__ == "__main__":
+    main()

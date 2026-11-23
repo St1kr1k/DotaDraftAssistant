@@ -46,7 +46,9 @@ def shade(color, i, j, k, amount=0.07, seed=0):
 
 
 RES_K = float(os.environ.get("VOXEL_RES_K", "3.2"))  # во сколько раз мельче кубики относительно сетки 30 на длину
-NOISE_BLOCK = max(1, int(round(RES_K / 1.6)))  # шум оттенка пятнами NxN — читается как текстура
+NOISE_BLOCK = max(1, int(round(RES_K / 1.6)))
+MIN_THICK = float(os.environ.get("VOXEL_MIN_THICK", "0.016"))  # минимальная толщина плавников/щупалец
+PATTERNS = os.environ.get("VOXEL_PATTERNS", "1") == "1"  # крапинки на медузах/осьминогах  # шум оттенка пятнами NxN — читается как текстура
 
 
 class Grid:
@@ -90,7 +92,7 @@ class Grid:
 
     def poly_slab(self, poly_yz, x_half, color_fn, overwrite=False, x_center=0.0):
         """Плоский плавник: многоугольник в плоскости YZ (точки (z, y)), толщина 2*x_half."""
-        x_half = max(x_half, 0.014)  # плавник объёмный при любой сетке
+        x_half = max(x_half, MIN_THICK * 0.9)  # плавник объёмный при любой сетке
         zs = [p[0] for p in poly_yz]
         ys = [p[1] for p in poly_yz]
 
@@ -109,7 +111,7 @@ class Grid:
                   lambda x, y, z: abs(x - x_center) <= x_half + 1e-6 and inside_poly(z, y), color_fn, overwrite)
 
     def line(self, pts, radius, color_fn, overwrite=True):
-        radius = max(radius, self.s * 0.88, 0.016)  # не тоньше ~1/60 длины, иначе линия рассыпается
+        radius = max(radius, self.s * 0.88, MIN_THICK)  # не тоньше ~1/60 длины, иначе линия рассыпается
         for a, b in zip(pts, pts[1:]):
             a = np.array(a, float)
             b = np.array(b, float)
@@ -502,7 +504,7 @@ def v_jelly(d):
     def color(x, y, z, i, j, k):
         if y < 0.08:
             return ("C2", shade(c2, i, j, k))
-        if hash3(i // 3, j // 3, k // 3, 5) > 0.82:
+        if PATTERNS and hash3(i // 3, j // 3, k // 3, 5) > 0.82:
             return ("C1", shade(lighter(c1, 0.3), i, j, k))
         return ("C1", shade(c1, i, j, k))
     g.fill(((-0.32, 0.32), (0, 0.32), (-0.32, 0.32)), inside, color)
@@ -541,7 +543,7 @@ def v_octopus(d):
     c1, c2 = d["C1"], d["C2"]
 
     def col(x, y, z, i, j, k):
-        if hash3(i // 2, j // 2, k // 2, 9) > 0.86:
+        if PATTERNS and hash3(i // 2, j // 2, k // 2, 9) > 0.86:
             return ("C1", shade(lighter(c1, 0.25), i, j, k))
         return ("C1", shade(c1, i, j, k))
     g.ellipsoid((0, 0.22, 0.05), (0.19, 0.23, 0.21), col)
