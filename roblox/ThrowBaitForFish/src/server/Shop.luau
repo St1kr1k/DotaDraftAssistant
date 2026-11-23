@@ -10,6 +10,7 @@ local Remotes = require(Shared.Remotes)
 
 local Data = require(script.Parent.Data)
 local PlayerService = require(script.Parent.PlayerService)
+local World = require(script.Parent.World)
 
 local Shop = {}
 
@@ -61,6 +62,45 @@ function Shop.Init()
 	end
 
 	Remotes.Get("UpgradeTank").OnServerInvoke = function(player)
+		return Shop.UpgradeTank(player)
+	end
+	Remotes.Get("BuyGear").OnServerInvoke = function(player)
+		return Shop.BuyGear(player)
+	end
+
+	-- кнопки улучшения прямо на базе
+	local function bindPlot(plot)
+		if plot.TankPrompt and not plot.TankPrompt:GetAttribute("Bound") then
+			plot.TankPrompt:SetAttribute("Bound", true)
+			plot.TankPrompt.Triggered:Connect(function(player)
+				if plot.Owner ~= player then
+					PlayerService.Notify(player, "This is not your base!", Color3.fromRGB(255, 120, 90))
+					return
+				end
+				local res = Shop.UpgradeTank(player)
+				PlayerService.Notify(player, res.ok and "🐠 Aquarium upgraded!" or res.msg, res.ok and Color3.fromRGB(120, 255, 120) or Color3.fromRGB(255, 120, 90))
+			end)
+		end
+	end
+	for _, plot in ipairs(World.Plots) do
+		bindPlot(plot)
+		if plot.BarPrompt then
+			plot.BarPrompt.Triggered:Connect(function(player)
+				if plot.Owner ~= player then
+					PlayerService.Notify(player, "This is not your base!", Color3.fromRGB(255, 120, 90))
+					return
+				end
+				local res = Shop.BuyGear(player)
+				PlayerService.Notify(player, res.ok and ("🏋️ Got " .. tostring(res.name) .. "!") or res.msg, res.ok and Color3.fromRGB(120, 255, 120) or Color3.fromRGB(255, 120, 90))
+			end)
+		end
+	end
+	World.OnTankPrompt = bindPlot
+	Shop.InitSelling()
+end
+
+function Shop.UpgradeTank(player: Player)
+	do
 		local profile = Data.Get(player)
 		if not profile then
 			return fail("Loading")
@@ -75,11 +115,15 @@ function Shop.Init()
 		profile.Cash -= cost
 		profile.TankLevel += 1
 		PlayerService.UpdateAttributes(player)
+		PlayerService.UpdateBase(player)
+		PlayerService.SyncTank(player)
 		PlayerService.Push(player)
 		return { ok = true }
 	end
+end
 
-	Remotes.Get("BuyGear").OnServerInvoke = function(player)
+function Shop.BuyGear(player: Player)
+	do
 		local profile = Data.Get(player)
 		if not profile then
 			return fail("Loading")
@@ -94,10 +138,13 @@ function Shop.Init()
 		profile.Cash -= nextGear.Price
 		profile.Gear = (profile.Gear or 1) + 1
 		PlayerService.UpdateAttributes(player)
+		PlayerService.UpdateBase(player)
 		PlayerService.Push(player)
 		return { ok = true, name = nextGear.Id }
 	end
+end
 
+function Shop.InitSelling()
 	Remotes.Get("SellFish").OnServerInvoke = function(player, uid)
 		local profile = Data.Get(player)
 		if not profile or type(uid) ~= "number" then

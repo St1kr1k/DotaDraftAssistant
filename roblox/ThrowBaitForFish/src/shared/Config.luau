@@ -95,7 +95,7 @@ Config.TrainingPasses = {
 Config.Passes = {
 	Cash2 = { Id = 0, Price = 99, Name = "x2 Cash", Desc = "All fish earn double money forever" },
 	Luck2 = { Id = 0, Price = 129, Name = "x2 Luck", Desc = "Double luck on every cast" },
-	AutoCast = { Id = 0, Price = 149, Name = "Auto Cast", Desc = "Fish automatically while AFK on your pier" },
+	AutoCast = { Id = 0, Price = 149, Name = "Auto Cast", Desc = "Fish automatically while AFK on the pier" },
 	BigTank = { Id = 0, Price = 79, Name = "+10 Tank Slots", Desc = "Your aquarium holds 10 more fish" },
 }
 

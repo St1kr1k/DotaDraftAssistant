@@ -29,7 +29,7 @@ end)
 task.delay(4, function()
 	local data = ClientState.Data
 	if data and (data.TotalCaught or 0) == 0 then
-		UI.Toast("👋 Walk to the end of your pier and HOLD the CAST button!", Color3.fromRGB(120, 240, 255), 7)
+		UI.Toast("👋 Go to the FISHING PIER and HOLD the CAST button!", Color3.fromRGB(120, 240, 255), 7)
 		task.wait(2)
 		UI.Toast("💪 Train on the pull-up bars to throw farther!", Color3.fromRGB(255, 220, 90), 7)
 	end

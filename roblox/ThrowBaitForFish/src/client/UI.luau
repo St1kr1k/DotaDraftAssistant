@@ -28,9 +28,9 @@ local rainbowGradients = {} :: { UIGradient }
 
 -- ===== Палитра =====
 local C = {
-	Panel = Color3.fromRGB(28, 52, 98),
-	Panel2 = Color3.fromRGB(16, 30, 64),
-	Stroke = Color3.fromRGB(8, 14, 32),
+	Panel = Color3.fromRGB(55, 150, 255),
+	Panel2 = Color3.fromRGB(28, 88, 200),
+	Stroke = Color3.fromRGB(12, 12, 18),
 	White = Color3.fromRGB(255, 255, 255),
 	Green = Color3.fromRGB(80, 220, 100),
 	Green2 = Color3.fromRGB(35, 160, 70),
@@ -94,7 +94,7 @@ local function text(props: { [string]: any }): TextLabel
 			(t :: any)[k] = v
 		end
 	end
-	new("UIStroke", { Thickness = props.StrokeThickness or 2, Color = C.Stroke, Parent = t })
+	new("UIStroke", { Thickness = props.StrokeThickness or 2.5, Color = C.Stroke, LineJoinMode = Enum.LineJoinMode.Round, Parent = t })
 	new("UITextSizeConstraint", { MaxTextSize = props.MaxText or 60, Parent = t })
 	t.Parent = props.Parent
 	return t
@@ -113,9 +113,9 @@ local function panel(props: { [string]: any }): Frame
 			(f :: any)[k] = v
 		end
 	end
-	corner(props.Corner or 14).Parent = f
-	stroke(3).Parent = f
-	grad(C.White, Color3.fromRGB(170, 185, 215)).Parent = f
+	corner(props.Corner or 16).Parent = f
+	stroke(3.5).Parent = f
+	grad(C.White, Color3.fromRGB(185, 200, 235)).Parent = f
 	f.Parent = props.Parent
 	return f
 end
@@ -134,7 +134,7 @@ local function button(props: { [string]: any }, onClick: (() -> ())?): TextButto
 		ZIndex = props.ZIndex,
 	})
 	corner(props.Corner or 12).Parent = b
-	stroke(3).Parent = b
+	stroke(3.5).Parent = b
 	local g = grad(c1, c2)
 	g.Parent = b
 	local us = new("UIScale", { Parent = b })
@@ -144,6 +144,8 @@ local function button(props: { [string]: any }, onClick: (() -> ())?): TextButto
 		Position = UDim2.fromOffset(5, 3),
 		MaxText = props.MaxText or 32,
 		ZIndex = props.ZIndex,
+		Font = Enum.Font.LuckiestGuy,
+		StrokeThickness = 3,
 		Parent = b,
 	})
 	label.Name = "Label"
@@ -342,7 +344,7 @@ local function openWindow(name: string, title: string, c1: Color3, c2: Color3)
 	local header = new("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.White, BorderSizePixel = 0, Parent = w })
 	corner(14).Parent = header
 	grad(c1, c2).Parent = header
-	text({ Text = title, Size = UDim2.new(1, -120, 0, 44), Position = UDim2.fromOffset(18, 6), MaxText = 36, TextXAlignment = Enum.TextXAlignment.Left, Parent = header })
+	text({ Text = title, Size = UDim2.new(1, -120, 0, 44), Position = UDim2.fromOffset(18, 6), MaxText = 38, Font = Enum.Font.LuckiestGuy, StrokeThickness = 3.5, TextXAlignment = Enum.TextXAlignment.Left, Parent = header })
 	button({ Text = "X", Size = UDim2.fromOffset(46, 46), Position = UDim2.new(1, -52, 0, 5), C1 = C.Red, C2 = C.Red2 }, closeWindow).Parent = header
 	local body = new("Frame", { Name = "Body", BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 64), Size = UDim2.new(1, -24, 1, -76), Parent = w })
 	currentWindow = w
@@ -492,7 +494,7 @@ renderers.Aquarium = function(body: Frame)
 		return GameData.FishIncome(a.Id, a.M, a.S) > GameData.FishIncome(b.Id, b.M, b.S)
 	end)
 	if #fishList == 0 then
-		text({ Text = "No fish yet — go cast from your pier! 🎣", Size = UDim2.new(1, 0, 0, 40), MaxText = 24, Parent = grid })
+		text({ Text = "No fish yet — go cast from the Fishing Pier! 🎣", Size = UDim2.new(1, 0, 0, 40), MaxText = 24, Parent = grid })
 	end
 	for i, f in ipairs(fishList) do
 		local def = GameData.FishById[f.Id]
@@ -655,16 +657,11 @@ local pierButton: TextButton
 local displayedCash = 0
 
 local function buildHud()
-	-- деньги
-	local cashFrame = panel({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 6), Size = UDim2.fromOffset(300, 56), BackgroundColor3 = C.White, Parent = gui })
-	local g = cashFrame:FindFirstChildOfClass("UIGradient")
-	if g then
-		g.Color = ColorSequence.new(C.Green, C.Green2)
-	end
-	scaleable(cashFrame)
-	cashLabel = text({ Text = "$0", Size = UDim2.new(1, -16, 1, -8), Position = UDim2.fromOffset(8, 4), MaxText = 44, StrokeThickness = 3, Parent = cashFrame })
-	incomeLabel = text({ Text = "+$0/s", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 64), Size = UDim2.fromOffset(240, 26), TextColor3 = Color3.fromRGB(170, 255, 170), MaxText = 24, Parent = gui })
-	scaleable(incomeLabel)
+	-- деньги (крупно слева, как в симуляторах)
+	local cashHolder = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 14, 0.5, -205), Size = UDim2.fromOffset(320, 96), BackgroundTransparency = 1, Parent = gui })
+	scaleable(cashHolder)
+	cashLabel = text({ Text = "$0", Size = UDim2.new(1, 0, 0, 62), Font = Enum.Font.LuckiestGuy, TextColor3 = Color3.fromRGB(95, 255, 95), TextXAlignment = Enum.TextXAlignment.Left, MaxText = 58, StrokeThickness = 4, Parent = cashHolder })
+	incomeLabel = text({ Text = "+$0/s", Position = UDim2.fromOffset(4, 62), Size = UDim2.new(1, 0, 0, 28), Font = Enum.Font.LuckiestGuy, TextColor3 = Color3.fromRGB(255, 240, 120), TextXAlignment = Enum.TextXAlignment.Left, MaxText = 26, StrokeThickness = 3, Parent = cashHolder })
 
 	eventBanner = panel({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 96), Size = UDim2.fromOffset(420, 38), BackgroundColor3 = C.Purple2, Visible = false, Parent = gui })
 	scaleable(eventBanner)
@@ -673,37 +670,42 @@ local function buildHud()
 	scaleable(luckBanner)
 	luckLabel = text({ Size = UDim2.new(1, -12, 1, -6), Position = UDim2.fromOffset(6, 3), MaxText = 20, Parent = luckBanner })
 
-	-- левое меню
-	local menu = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 10, 0.5, 0), Size = UDim2.fromOffset(86, 440), BackgroundTransparency = 1, Parent = gui })
+	-- левое меню: яркие квадратные кнопки в 2 столбца
+	local menu = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 14, 0.5, 40), Size = UDim2.fromOffset(180, 280), BackgroundTransparency = 1, Parent = gui })
 	scaleable(menu)
-	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, VerticalAlignment = Enum.VerticalAlignment.Center, Parent = menu })
-	local items = {
-		{ "🛒\nShop", C.Orange, C.Orange2, function() UI.OpenWindow("Shop") end },
-		{ "🐠\nTank", C.Blue, C.Blue2, function() UI.OpenWindow("Aquarium") end },
-		{ "📖\nIndex", C.Purple, C.Purple2, function() UI.OpenWindow("Index") end },
-		{ "💎\nStore", C.Gold, C.Gold2, function() UI.OpenWindow("Store") end },
-		{ "🏝️\nPier", C.Green, C.Green2, function()
-			local ok = Remotes.Get("GoToPier"):InvokeServer()
+	new("UIGridLayout", { CellSize = UDim2.fromOffset(84, 84), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = menu })
+	local function goTo(remote: string)
+		return function()
+			local ok = Remotes.Get(remote):InvokeServer()
 			if not ok then
 				UI.Toast("Stop training first!", C.Red)
 			end
-		end },
+		end
+	end
+	local items = {
+		{ "🛒", "SHOP", C.Orange, C.Orange2, function() UI.OpenWindow("Shop") end },
+		{ "💎", "STORE", C.Gold, C.Gold2, function() UI.OpenWindow("Store") end },
+		{ "🐠", "TANK", C.Blue, C.Blue2, function() UI.OpenWindow("Aquarium") end },
+		{ "📖", "INDEX", C.Purple, C.Purple2, function() UI.OpenWindow("Index") end },
+		{ "🎣", "PIER", Color3.fromRGB(80, 230, 230), Color3.fromRGB(20, 150, 170), goTo("GoToPier") },
+		{ "🏠", "BASE", C.Green, C.Green2, goTo("GoToBase") },
 	}
 	for i, it in ipairs(items) do
-		local b = button({ Text = it[1], Size = UDim2.fromOffset(80, 76), C1 = it[2], C2 = it[3], LayoutOrder = i, MaxText = 24 }, it[4])
+		local b = button({ Text = "", LayoutOrder = i, C1 = it[3], C2 = it[4], Corner = 16 }, it[5])
+		b.Rotation = (i % 2 == 0) and 2 or -2
 		b.Parent = menu
-		if i == 5 then
+		text({ Text = it[1], Size = UDim2.new(1, -16, 0.58, 0), Position = UDim2.new(0, 8, 0, 6), MaxText = 44, StrokeThickness = 0, Parent = b })
+		text({ Text = it[2], Size = UDim2.new(1, -8, 0.3, 0), Position = UDim2.new(0, 4, 0.64, 0), Font = Enum.Font.LuckiestGuy, MaxText = 22, StrokeThickness = 3, Parent = b })
+		if it[2] == "PIER" then
 			pierButton = b
 		end
-		if i == 4 then
-			-- покачивание кнопки доната
+		if it[2] == "STORE" then
 			task.spawn(function()
 				local us = b:FindFirstChildOfClass("UIScale")
 				while b.Parent do
 					task.wait(4)
 					if us then
-						local tw = TweenService:Create(us, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 3, true), { Scale = 1.12 })
-						tw:Play()
+						TweenService:Create(us, TweenInfo.new(0.18, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 3, true), { Scale = 1.12 }):Play()
 					end
 				end
 			end)
@@ -713,7 +715,7 @@ local function buildHud()
 	-- сила внизу
 	local powerFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(460, 70), BackgroundColor3 = C.Panel, Parent = gui })
 	scaleable(powerFrame)
-	powerLabel = text({ Text = "💪 0 Power", Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 4), MaxText = 26, Parent = powerFrame })
+	powerLabel = text({ Text = "💪 0 Power", Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 4), MaxText = 26, Font = Enum.Font.LuckiestGuy, StrokeThickness = 3, Parent = powerFrame })
 	local bar = new("Frame", { Size = UDim2.new(1, -24, 0, 26), Position = UDim2.fromOffset(12, 38), BackgroundColor3 = C.Panel2, Parent = powerFrame })
 	corner(10).Parent = bar
 	stroke(2).Parent = bar
@@ -736,7 +738,7 @@ local function buildHud()
 	new("UICorner", { CornerRadius = UDim.new(0.5, 0), Parent = castButton })
 	stroke(4).Parent = castButton
 	grad(Color3.fromRGB(110, 230, 255), Color3.fromRGB(30, 120, 230)).Parent = castButton
-	text({ Text = "🎣\nCAST", Size = UDim2.new(1, -24, 1, -30), Position = UDim2.fromOffset(12, 15), MaxText = 40, StrokeThickness = 3, Parent = castButton })
+	text({ Text = "🎣\nCAST", Size = UDim2.new(1, -24, 1, -30), Position = UDim2.fromOffset(12, 15), MaxText = 42, Font = Enum.Font.LuckiestGuy, StrokeThickness = 4, Parent = castButton })
 	castButton.MouseButton1Down:Connect(function()
 		if UI.Callbacks.CastDown then
 			UI.Callbacks.CastDown()

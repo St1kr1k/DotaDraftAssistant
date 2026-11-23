@@ -17,6 +17,7 @@ Remotes.Functions = {
 	"SellBulk", -- (maxRarity)
 	"StopTraining", -- ()
 	"GoToPier", -- ()
+	"GoToBase", -- ()
 	"DevGrant", -- (key) — только в Studio, для теста доната без Id
 	"GetState", -- () -> снимок данных игрока
 }

@@ -17,16 +17,55 @@ local Training = {}
 
 local occupied = {} :: { [BasePart]: Player }
 
-local function shoulders(character: Model)
-	local list = {}
-	for _, name in ipairs({ "RightUpperArm", "LeftUpperArm" }) do
-		local arm = character:FindFirstChild(name)
-		local joint = arm and arm:FindFirstChild(name == "RightUpperArm" and "RightShoulder" or "LeftShoulder")
+-- Суставы R15 для позы на турнике: имя части -> имя сустава
+local JOINTS = {
+	{ Part = "RightUpperArm", Joint = "RightShoulder", Kind = "Shoulder", Side = 1 },
+	{ Part = "LeftUpperArm", Joint = "LeftShoulder", Kind = "Shoulder", Side = -1 },
+	{ Part = "RightLowerArm", Joint = "RightElbow", Kind = "Elbow", Side = 1 },
+	{ Part = "LeftLowerArm", Joint = "LeftElbow", Kind = "Elbow", Side = -1 },
+	{ Part = "RightUpperLeg", Joint = "RightHip", Kind = "Hip", Side = 1 },
+	{ Part = "LeftUpperLeg", Joint = "LeftHip", Kind = "Hip", Side = -1 },
+	{ Part = "RightLowerLeg", Joint = "RightKnee", Kind = "Knee", Side = 1 },
+	{ Part = "LeftLowerLeg", Joint = "LeftKnee", Kind = "Knee", Side = -1 },
+}
+
+-- Поза: top = false — вис на прямых руках, true — подбородок над перекладиной
+local function poseOffset(kind: string, side: number, top: boolean): CFrame
+	if kind == "Shoulder" then
+		return top and CFrame.Angles(math.rad(140), 0, side * 0.6) or CFrame.Angles(math.rad(176), 0, side * 0.28)
+	elseif kind == "Elbow" then
+		return top and CFrame.Angles(math.rad(95), 0, 0) or CFrame.Angles(math.rad(8), 0, 0)
+	elseif kind == "Hip" then
+		return top and CFrame.Angles(math.rad(35), 0, 0) or CFrame.Angles(math.rad(14), 0, 0)
+	elseif kind == "Knee" then
+		return top and CFrame.Angles(math.rad(-80), 0, 0) or CFrame.Angles(math.rad(-55), 0, 0)
+	end
+	return CFrame.identity
+end
+
+local function collectJoints(character: Model)
+	local saved = {}
+	for _, j in ipairs(JOINTS) do
+		local part = character:FindFirstChild(j.Part)
+		local joint = part and part:FindFirstChild(j.Joint)
 		if joint and joint:IsA("Motor6D") then
-			table.insert(list, joint)
+			saved[joint] = { C0 = joint.C0, Kind = j.Kind, Side = j.Side }
 		end
 	end
-	return list
+	return saved
+end
+
+local function applyPose(saved, top: boolean, duration: number, style: Enum.EasingStyle?)
+	for joint, info in pairs(saved) do
+		if joint.Parent then
+			local goal = info.C0 * poseOffset(info.Kind, info.Side, top)
+			if duration <= 0 then
+				joint.C0 = goal
+			else
+				TweenService:Create(joint, TweenInfo.new(duration, style or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { C0 = goal }):Play()
+			end
+		end
+	end
 end
 
 local function stop(player: Player)
@@ -40,9 +79,10 @@ local function stop(player: Player)
 	player:SetAttribute("Training", false)
 	local character = player.Character
 	if character then
-		for joint, c0 in pairs(state.SavedC0) do
+		for joint, info in pairs(state.SavedC0) do
 			if joint.Parent then
-				joint.C0 = c0
+				-- новый твин отменяет недоигранный твин позы
+				TweenService:Create(joint, TweenInfo.new(0.08), { C0 = info.C0 }):Play()
 			end
 		end
 		local root = character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -69,10 +109,18 @@ local function doRep(player: Player, fromClick: boolean)
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if root and not state.Animating then
 		state.Animating = true
-		local up = TweenService:Create(root, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = state.HangCf * CFrame.new(0, 1.6, 0) })
+		-- рывок вверх: руки сгибаются, ноги поджимаются, тело поднимается
+		local upTime = fromClick and 0.17 or 0.32
+		local downTime = fromClick and 0.22 or 0.45
+		applyPose(state.SavedC0, true, upTime)
+		local up = TweenService:Create(root, TweenInfo.new(upTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = state.HangCf * CFrame.new(0, 1.5, 0) })
 		up:Play()
 		up.Completed:Connect(function()
-			local down = TweenService:Create(root, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = state.HangCf })
+			if not session.Training then
+				return
+			end
+			applyPose(state.SavedC0, false, downTime, Enum.EasingStyle.Sine)
+			local down = TweenService:Create(root, TweenInfo.new(downTime, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), { CFrame = state.HangCf })
 			down:Play()
 			down.Completed:Connect(function()
 				state.Animating = false
@@ -100,13 +148,10 @@ local function start(player: Player, bar: BasePart)
 	if not root or not humanoid or humanoid.Health <= 0 then
 		return
 	end
-	local hangCf = bar.CFrame * CFrame.new(0, -3.1, 0) -- ориентация турника: смотрим наружу
+	local hangCf = bar.CFrame * CFrame.new(0, -3.3, 0) -- ориентация турника: смотрим наружу
 	hangCf = CFrame.lookAt(hangCf.Position, hangCf.Position + bar.CFrame.LookVector)
-	local saved = {}
-	for _, joint in ipairs(shoulders(character)) do
-		saved[joint] = joint.C0
-		joint.C0 = joint.C0 * CFrame.Angles(math.rad(175), 0, 0)
-	end
+	local saved = collectJoints(character)
+	applyPose(saved, false, 0.2)
 	root.Anchored = true
 	root.CFrame = hangCf
 	PlayerService.SetRodVisible(character, false)
@@ -126,7 +171,7 @@ function Training.Init()
 		table.insert(bars, b)
 	end
 	for _, bar in ipairs(bars) do
-		local prompt = bar:FindFirstChildOfClass("ProximityPrompt")
+		local prompt = bar:FindFirstChild("TrainPrompt", true)
 		if prompt then
 			prompt.Triggered:Connect(function(player)
 				start(player, bar)

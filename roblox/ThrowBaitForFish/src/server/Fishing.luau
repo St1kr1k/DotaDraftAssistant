@@ -62,14 +62,9 @@ local function rollSize(luck: number): number
 	return weightedPick(weights)
 end
 
-local function nearCastSpot(player: Player, plot): boolean
+local function rootOf(player: Player): BasePart?
 	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not root then
-		return false
-	end
-	local d = (root.Position - plot.CastSpot.Position) * Vector3.new(1, 0, 1)
-	return d.Magnitude <= Config.CastSpotRadius and math.abs(root.Position.Y - plot.CastSpot.Position.Y) < 8
+	return character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 end
 
 local function onCast(player: Player, charge: any)
@@ -95,7 +90,8 @@ local function onCast(player: Player, charge: any)
 	if not plot then
 		return { ok = false, reason = "noplot" }
 	end
-	if not nearCastSpot(player, plot) then
+	local root = rootOf(player)
+	if not root or not World.InCastZone(root.Position) then
 		return { ok = false, reason = "far" }
 	end
 	session.LastCast = now
@@ -120,7 +116,10 @@ local function onCast(player: Player, charge: any)
 	local flight = 0.55 + dist / 420
 	local bite = rng:NextNumber(1.1, 2.6) * (ev and ev.Bite or 1)
 	local reel = 0.9 + fish.Rarity * 0.22
-	local landing = plot.CastSpot.Position + plot.Dir * dist
+	-- каждый бросает прямо перед собой, поплавки не накладываются
+	local pier = World.Pier
+	local lateral = math.clamp((root.Position - pier.Edge):Dot(pier.Right), -32, 32)
+	local landing = pier.Edge + pier.Right * lateral * 1.6 + pier.Dir * dist
 	landing = Vector3.new(landing.X, Config.WaterY, landing.Z)
 
 	session.Pending = {
@@ -185,6 +184,14 @@ end
 function Fishing.Init()
 	Remotes.Get("Cast").OnServerInvoke = onCast
 	Remotes.Get("Reel").OnServerInvoke = onReel
+	Remotes.Get("GoToBase").OnServerInvoke = function(player)
+		local _, session = Data.Get(player)
+		if session and session.Training then
+			return false
+		end
+		PlayerService.TeleportToPlot(player)
+		return true
+	end
 	Remotes.Get("GoToPier").OnServerInvoke = function(player)
 		local _, session = Data.Get(player)
 		if session and session.Training then

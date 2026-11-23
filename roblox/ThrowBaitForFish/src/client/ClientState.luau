@@ -55,10 +55,43 @@ function ClientState.MyPlot(): Model?
 	return nil
 end
 
-function ClientState.CastSpot(): BasePart?
-	local plot = ClientState.MyPlot()
-	local pier = plot and plot:FindFirstChild("Pier")
-	return pier and pier:FindFirstChild("CastSpot") :: BasePart?
+-- Общий пирс
+function ClientState.Pier(): Model?
+	local map = workspace:FindFirstChild("Map")
+	return map and map:FindFirstChild("Pier") :: Model?
+end
+
+function ClientState.CastZone(): BasePart?
+	local pier = ClientState.Pier()
+	return pier and pier:FindFirstChild("CastZone") :: BasePart?
+end
+
+function ClientState.InCastZone(pos: Vector3): boolean
+	local zone = ClientState.CastZone()
+	if not zone then
+		return false
+	end
+	local rel = zone.CFrame:PointToObjectSpace(pos)
+	local half = zone.Size / 2
+	return math.abs(rel.X) <= half.X and math.abs(rel.Y) <= half.Y + 1 and math.abs(rel.Z) <= half.Z
+end
+
+-- Ближайшее светящееся место для заброса
+function ClientState.NearestSpot(pos: Vector3): BasePart?
+	local pier = ClientState.Pier()
+	if not pier then
+		return nil
+	end
+	local best, bestD = nil, math.huge
+	for _, c in ipairs(pier:GetChildren()) do
+		if c.Name == "CastSpot" and c:IsA("BasePart") then
+			local d = (c.Position - pos).Magnitude
+			if d < bestD then
+				best, bestD = c, d
+			end
+		end
+	end
+	return best
 end
 
 return ClientState

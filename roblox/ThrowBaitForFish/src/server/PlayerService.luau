@@ -133,8 +133,51 @@ function PlayerService.UpdateSign(player: Player)
 	local plot = World.PlotOf(player)
 	local profile = Data.Profiles[player]
 	if plot and profile then
-		plot.OwnerLabel.Text = player.DisplayName .. "'s Aquarium"
+		plot.OwnerLabel.Text = #profile.Fish .. "/" .. Stats.Capacity(player, profile) .. " 🐟"
 		plot.IncomeLabel.Text = Format.Money(Stats.Income(player, profile)) .. "/s"
+	end
+end
+
+-- Вид базы: табличка на воротах, уровень аквариума и турника, цены на кнопках улучшения
+function PlayerService.UpdateBase(player: Player)
+	local plot = World.PlotOf(player)
+	local profile = Data.Profiles[player]
+	if not plot or not profile then
+		return
+	end
+	for _, l in ipairs(plot.GateLabels) do
+		l.Text = string.upper(player.DisplayName) .. "'S BASE"
+		l.TextColor3 = plot.Color
+	end
+	local tier = math.min(4, math.floor((profile.TankLevel or 0) / 4))
+	if tier ~= plot.TankTier then
+		World.RebuildTank(plot, tier)
+	end
+	World.SetBarTier(plot.BarModel, profile.Gear or 1)
+	if (profile.TankLevel or 0) >= Config.MaxTankUpgrades then
+		plot.TankPrompt.ActionText = "Aquarium MAX"
+	else
+		plot.TankPrompt.ActionText = "Upgrade +" .. Config.SlotsPerUpgrade .. " slots (" .. Format.Money(Config.TankUpgradeCost(profile.TankLevel or 0)) .. ")"
+	end
+	local nextGear = GameData.Gear[(profile.Gear or 1) + 1]
+	if plot.BarPrompt then
+		plot.BarPrompt.ActionText = nextGear and ("Upgrade to " .. nextGear.Id .. " (" .. Format.Money(nextGear.Price) .. ")") or "Bar MAX"
+	end
+	PlayerService.UpdateSign(player)
+end
+
+function PlayerService.ResetBase(plot)
+	for _, l in ipairs(plot.GateLabels) do
+		l.Text = "EMPTY BASE"
+		l.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+	if plot.TankTier ~= 0 then
+		World.RebuildTank(plot, 0)
+	end
+	World.SetBarTier(plot.BarModel, 1)
+	plot.TankPrompt.ActionText = "Upgrade Aquarium"
+	if plot.BarPrompt then
+		plot.BarPrompt.ActionText = "Upgrade Bar"
 	end
 end
 
@@ -202,18 +245,31 @@ function PlayerService.TeleportToPlot(player: Player)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if plot and root then
-		local cf = plot.CFrame * CFrame.new(0, 4, -6)
-		root.CFrame = CFrame.lookAt(cf.Position, cf.Position + plot.Dir)
+		root.CFrame = plot.SpawnCf
 	end
 end
 
 function PlayerService.TeleportToPier(player: Player)
-	local plot = World.PlotOf(player)
+	local pier = World.Pier
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if plot and root then
-		local p = plot.CastSpot.Position + Vector3.new(0, 3.2, 0) - plot.Dir * 1.5
-		root.CFrame = CFrame.lookAt(p, p + plot.Dir)
+	if pier and root then
+		-- свободное место (дальше всех от других игроков)
+		local best, bestScore = pier.Spots[1], -1
+		for _, spot in ipairs(pier.Spots) do
+			local nearest = math.huge
+			for _, other in ipairs(game:GetService("Players"):GetPlayers()) do
+				local orRoot = other ~= player and other.Character and other.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+				if orRoot then
+					nearest = math.min(nearest, (orRoot.Position - spot.Position).Magnitude)
+				end
+			end
+			if nearest > bestScore then
+				best, bestScore = spot, nearest
+			end
+		end
+		local p = best.Position + Vector3.new(0, 3.2, 0)
+		root.CFrame = CFrame.lookAt(p, p + pier.Dir)
 	end
 end
 
@@ -289,6 +345,7 @@ function PlayerService.OnJoin(player: Player, applyPasses: (Player) -> ())
 		PlayerService.Notify(player, "Server is full of plots — rejoin another server!", Color3.fromRGB(255, 90, 90))
 	end
 	PlayerService.UpdateAttributes(player)
+	PlayerService.UpdateBase(player)
 	PlayerService.SyncTank(player)
 	PlayerService.Push(player)
 	if player.Character then
@@ -310,8 +367,9 @@ function PlayerService.OnLeave(player: Player)
 		plot.Owner = nil
 		plot.Model:SetAttribute("OwnerId", nil)
 		plot.FishFolder:ClearAllChildren()
-		plot.OwnerLabel.Text = "Empty Plot"
+		plot.OwnerLabel.Text = ""
 		plot.IncomeLabel.Text = ""
+		PlayerService.ResetBase(plot)
 	end
 end
 
