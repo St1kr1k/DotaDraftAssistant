@@ -19,7 +19,7 @@ from glb import write_glb  # noqa: E402
 import meshgen  # noqa: E402
 
 ROOT = meshgen.ROOT
-OUT = os.path.join(ROOT, "build", "voxels")
+OUT = os.path.join(ROOT, "build", os.environ.get("VOXEL_OUT", "voxels"))
 
 FACES = [
     ((1, 0, 0), [(1, 0, 0), (1, 1, 0), (1, 1, 1), (1, 0, 1)]),
@@ -39,12 +39,14 @@ def hash3(i, j, k, seed=0):
 
 def shade(color, i, j, k, amount=0.07, seed=0):
     """Лёгкий шум оттенка, квантованный в 3 уровня — как текстура вокселов."""
-    h = hash3(i, j, k, seed)
+    nb = NOISE_BLOCK
+    h = hash3(i // nb, j // nb, k // nb, seed)
     f = 1 - amount if h < 0.33 else (1 + amount * 0.7 if h > 0.72 else 1.0)
     return tuple(int(max(0, min(255, c * f))) for c in color)
 
 
-RES_K = 1.6  # во сколько раз мельче кубики относительно базовой сетки 30 на длину
+RES_K = float(os.environ.get("VOXEL_RES_K", "3.2"))  # во сколько раз мельче кубики относительно сетки 30 на длину
+NOISE_BLOCK = max(1, int(round(RES_K / 1.6)))  # шум оттенка пятнами NxN — читается как текстура
 
 
 class Grid:
@@ -88,6 +90,7 @@ class Grid:
 
     def poly_slab(self, poly_yz, x_half, color_fn, overwrite=False, x_center=0.0):
         """Плоский плавник: многоугольник в плоскости YZ (точки (z, y)), толщина 2*x_half."""
+        x_half = max(x_half, 0.014)  # плавник объёмный при любой сетке
         zs = [p[0] for p in poly_yz]
         ys = [p[1] for p in poly_yz]
 
@@ -106,7 +109,7 @@ class Grid:
                   lambda x, y, z: abs(x - x_center) <= x_half + 1e-6 and inside_poly(z, y), color_fn, overwrite)
 
     def line(self, pts, radius, color_fn, overwrite=True):
-        radius = max(radius, self.s * 0.88)  # тоньше — линия рассыпается на отдельные кубики
+        radius = max(radius, self.s * 0.88, 0.016)  # не тоньше ~1/60 длины, иначе линия рассыпается
         for a, b in zip(pts, pts[1:]):
             a = np.array(a, float)
             b = np.array(b, float)
@@ -235,11 +238,12 @@ def eyes(g, body, t, up=0.35, size=2, cute=False, pupil_color=(15, 15, 20)):
     j0 = int(round(y * g.res))
     k0 = int(round(z * g.res))
     sz = max(2, int(round((size + (1 if cute else 0)) * g.res / 30)))
+    depth = max(2, int(round(0.03 * g.res)))
     for side in (1, -1):
         for dj in range(sz):
             for dk in range(sz):
-                g.set(side * (i_side + 1), j0 + dj - sz // 2, k0 + dk - sz // 2, "Eye", (250, 250, 250))
-                g.set(side * i_side, j0 + dj - sz // 2, k0 + dk - sz // 2, "Eye", (250, 250, 250))
+                for di in range(-depth + 1, 2):
+                    g.set(side * (i_side + di), j0 + dj - sz // 2, k0 + dk - sz // 2, "Eye", (250, 250, 250))
         pj = j0 - sz // 2
         pk = k0 - sz // 2
         for dj in range(max(1, sz - 1)):
@@ -255,11 +259,12 @@ def eye_block(g, x, y, z, size, white=True, color=(15, 15, 20)):
     j0 = int(round(y * g.res)) - n // 2
     k0 = int(round(z * g.res)) - n // 2
     for side in (1, -1):
+        depth = max(2, int(round(0.03 * g.res)))
         if white:
             for dj in range(n):
                 for dk in range(n):
-                    g.set(side * i0, j0 + dj, k0 + dk, "Eye", (250, 250, 250))
-                    g.set(side * (i0 + 1), j0 + dj, k0 + dk, "Eye", (250, 250, 250))
+                    for di in range(-depth + 1, 2):
+                        g.set(side * (i0 + di), j0 + dj, k0 + dk, "Eye", (250, 250, 250))
         pn = max(1, n - 1) if white else n
         role = "Pupil" if color == (15, 15, 20) else "Glow"
         for dj in range(pn):
