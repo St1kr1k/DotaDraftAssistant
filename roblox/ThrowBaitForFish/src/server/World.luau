@@ -131,9 +131,9 @@ local function setupLighting()
 	atm.Parent = Lighting
 
 	local bloom = Instance.new("BloomEffect")
-	bloom.Intensity = 0.8
-	bloom.Size = 30
-	bloom.Threshold = 1.4
+	bloom.Intensity = 0.4
+	bloom.Size = 24
+	bloom.Threshold = 2
 	bloom.Parent = Lighting
 
 	local cc = Instance.new("ColorCorrectionEffect")
@@ -240,31 +240,148 @@ local function palm(parent: Instance, pos: Vector3, height: number)
 	end
 end
 
-local function bush(parent: Instance, pos: Vector3)
-	local colors = { rgb(70, 150, 70), rgb(90, 170, 80), rgb(60, 130, 65) }
-	for i = 1, 3 do
-		local s = rng:NextNumber(2.5, 4.5)
-		P({ Shape = Enum.PartType.Ball, Size = Vector3.new(s, s, s), Position = pos + Vector3.new(rng:NextNumber(-1.5, 1.5), s * 0.3, rng:NextNumber(-1.5, 1.5)), Color = colors[i], Material = Enum.Material.Grass, Parent = parent })
+local GREENS = { rgb(70, 160, 70), rgb(90, 180, 75), rgb(55, 140, 60), rgb(110, 190, 80) }
+
+-- Куст: плотная шапка из перекрывающихся шаров разных оттенков
+local function bush(parent: Instance, pos: Vector3, size: number?)
+	local s0 = size or rng:NextNumber(3, 4.5)
+	local m = model("Bush", parent)
+	for i = 1, 7 do
+		local a = i / 7 * math.pi * 2
+		local r = (i == 7) and 0 or s0 * 0.35
+		local s = s0 * rng:NextNumber(0.55, 0.8)
+		P({ Shape = Enum.PartType.Ball, Size = Vector3.new(s, s, s), Position = pos + Vector3.new(math.cos(a) * r, s * 0.38 + (i == 7 and s0 * 0.25 or 0), math.sin(a) * r), Color = GREENS[rng:NextInteger(1, #GREENS)], CanCollide = i == 7, Parent = m })
 	end
-	if rng:NextNumber() < 0.7 then
-		local flower = ({ rgb(255, 120, 160), rgb(255, 230, 90), rgb(255, 255, 255), rgb(190, 120, 255) })[rng:NextInteger(1, 4)]
-		for _ = 1, 4 do
-			P({ Shape = Enum.PartType.Ball, Size = Vector3.new(0.7, 0.7, 0.7), Position = pos + Vector3.new(rng:NextNumber(-2, 2), rng:NextNumber(2.2, 3.4), rng:NextNumber(-2, 2)), Color = flower, Material = Enum.Material.Neon, CanCollide = false, Parent = parent })
+end
+
+-- Пучок травы: несколько тонких наклонённых травинок
+local function grassTuft(parent: Instance, pos: Vector3)
+	local base = GREENS[rng:NextInteger(1, #GREENS)]
+	for _ = 1, rng:NextInteger(4, 7) do
+		local h = rng:NextNumber(1, 2.2)
+		local yaw = rng:NextNumber(0, math.pi * 2)
+		local tilt = rng:NextNumber(0.1, 0.45)
+		local cf = CFrame.new(pos) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(tilt, 0, 0) * CFrame.new(0, h / 2, 0)
+		P({ Class = "WedgePart", Size = Vector3.new(0.12, h, 0.45), CFrame = cf, Color = base:Lerp(rgb(170, 220, 90), rng:NextNumber(0, 0.35)), CanCollide = false, CanQuery = false, CastShadow = false, Parent = parent })
+	end
+end
+
+-- Цветок: стебель, 5 лепестков, серединка
+local function flower(parent: Instance, pos: Vector3, color: Color3)
+	local h = rng:NextNumber(1.2, 2)
+	P({ Size = Vector3.new(0.12, h, 0.12), Position = pos + Vector3.new(0, h / 2, 0), Color = rgb(60, 140, 55), CanCollide = false, CastShadow = false, Parent = parent })
+	local top = pos + Vector3.new(0, h, 0)
+	local yaw = rng:NextNumber(0, math.pi * 2)
+	for i = 0, 4 do
+		local a = yaw + i / 5 * math.pi * 2
+		local cf = CFrame.new(top) * CFrame.Angles(0, a, 0) * CFrame.new(0, 0, -0.32) * CFrame.Angles(-0.3, 0, 0)
+		local petal = P({ Size = Vector3.new(0.42, 0.1, 0.55), CFrame = cf, Color = color, CanCollide = false, CastShadow = false, Parent = parent })
+		local mesh = Instance.new("SpecialMesh")
+		mesh.MeshType = Enum.MeshType.Sphere
+		mesh.Parent = petal
+	end
+	P({ Shape = Enum.PartType.Ball, Size = Vector3.new(0.32, 0.32, 0.32), Position = top + Vector3.new(0, 0.06, 0), Color = rgb(255, 210, 60), CanCollide = false, CastShadow = false, Parent = parent })
+end
+
+local FLOWER_COLORS = { rgb(255, 110, 150), rgb(255, 225, 80), rgb(255, 255, 255), rgb(180, 120, 255), rgb(255, 140, 70) }
+
+local function flowerPatch(parent: Instance, center: Vector3, count: number)
+	local color = FLOWER_COLORS[rng:NextInteger(1, #FLOWER_COLORS)]
+	for _ = 1, count do
+		flower(parent, center + Vector3.new(rng:NextNumber(-3, 3), 0, rng:NextNumber(-3, 3)), color)
+	end
+end
+
+-- Камни: 2-4 гранёных блока под разными углами
+local function rocks(parent: Instance, pos: Vector3, scale: number?)
+	local k = scale or 1
+	for i = 1, rng:NextInteger(2, 4) do
+		local s = Vector3.new(rng:NextNumber(1.5, 3.5), rng:NextNumber(1.2, 2.6), rng:NextNumber(1.5, 3.2)) * k
+		local c = rgb(125, 125, 130):Lerp(rgb(165, 160, 150), rng:NextNumber())
+		P({ Size = s, CFrame = CFrame.new(pos + Vector3.new(rng:NextNumber(-1.5, 1.5) * k, s.Y * 0.3, rng:NextNumber(-1.5, 1.5) * k)) * CFrame.Angles(rng:NextNumber(-0.4, 0.4), rng:NextNumber(0, 6), rng:NextNumber(-0.4, 0.4)), Color = c, Material = Enum.Material.Slate, Parent = parent })
+		local _ = i
+	end
+end
+
+-- Морская звезда на песке
+local function starfish(parent: Instance, pos: Vector3)
+	local color = ({ rgb(255, 120, 70), rgb(255, 90, 120), rgb(255, 200, 80) })[rng:NextInteger(1, 3)]
+	local yaw = rng:NextNumber(0, math.pi * 2)
+	for i = 0, 4 do
+		local a = yaw + i / 5 * math.pi * 2
+		local arm = P({ Size = Vector3.new(0.45, 0.2, 1), CFrame = CFrame.new(pos + Vector3.new(0, 0.1, 0)) * CFrame.Angles(0, a, 0) * CFrame.new(0, 0, -0.45), Color = color, CanCollide = false, Parent = parent })
+		local mesh = Instance.new("SpecialMesh")
+		mesh.MeshType = Enum.MeshType.Sphere
+		mesh.Parent = arm
+	end
+end
+
+-- Пляжный зонт с двумя шезлонгами
+local function beachSet(parent: Instance, pos: Vector3, facing: Vector3)
+	local m = model("BeachSet", parent)
+	local colors = { rgb(255, 90, 90), rgb(255, 255, 255) }
+	P({ Size = Vector3.new(0.3, 8, 0.3), Position = pos + Vector3.new(0, 4, 0), Color = rgb(240, 240, 240), Parent = m })
+	for i = 0, 9 do
+		local a = i / 10 * math.pi * 2
+		P({ Class = "WedgePart", Size = Vector3.new(2.1, 1.3, 3.6), CFrame = CFrame.new(pos + Vector3.new(0, 8, 0)) * CFrame.Angles(0, a, 0) * CFrame.new(0, -0.45, -1.8), Color = colors[i % 2 + 1], CanCollide = false, Parent = m })
+	end
+	local cf = CFrame.lookAt(pos, pos + facing)
+	for _, x in ipairs({ -2.2, 2.2 }) do
+		P({ Size = Vector3.new(1.8, 0.3, 4.5), CFrame = cf * CFrame.new(x, 0.9, 1.5), Color = rgb(80, 170, 255), Parent = m })
+		P({ Size = Vector3.new(1.8, 0.3, 1.8), CFrame = cf * CFrame.new(x, 1.5, 3.9) * CFrame.Angles(-0.7, 0, 0), Color = rgb(80, 170, 255), Parent = m })
+		for _, z in ipairs({ -0.4, 3.4 }) do
+			P({ Size = Vector3.new(1.6, 0.8, 0.2), CFrame = cf * CFrame.new(x, 0.4, z), Color = rgb(240, 240, 240), Parent = m })
 		end
 	end
 end
 
+local function barrel(parent: Instance, pos: Vector3)
+	P({ Shape = Enum.PartType.Cylinder, Size = Vector3.new(2.6, 2, 2), CFrame = CFrame.new(pos + Vector3.new(0, 1.3, 0)) * CFrame.Angles(0, 0, math.pi / 2), Color = rgb(150, 100, 60), Material = Enum.Material.Wood, Parent = parent })
+	for _, y in ipairs({ 0.4, 2.2 }) do
+		P({ Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.25, 2.1, 2.1), CFrame = CFrame.new(pos + Vector3.new(0, y, 0)) * CFrame.Angles(0, 0, math.pi / 2), Color = rgb(80, 80, 90), Material = Enum.Material.Metal, Parent = parent })
+	end
+end
+
+local function crate(parent: Instance, pos: Vector3, size: number?)
+	local s = size or 2.4
+	local cf = CFrame.new(pos + Vector3.new(0, s / 2, 0)) * CFrame.Angles(0, rng:NextNumber(0, 1.5), 0)
+	P({ Size = Vector3.new(s, s, s), CFrame = cf, Color = rgb(190, 140, 85), Material = Enum.Material.WoodPlanks, Parent = parent })
+	for _, e in ipairs({ { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } }) do
+		P({ Size = Vector3.new(0.3, s + 0.05, 0.3), CFrame = cf * CFrame.new(e[1] * (s / 2 - 0.1), 0, e[2] * (s / 2 - 0.1)), Color = rgb(120, 82, 52), Material = Enum.Material.Wood, Parent = parent })
+	end
+end
+
+local function rowboat(parent: Instance, cf: CFrame)
+	local m = model("Rowboat", parent)
+	local hull = rgb(235, 235, 240)
+	local trim = rgb(60, 130, 220)
+	P({ Size = Vector3.new(4, 0.5, 9), CFrame = cf * CFrame.new(0, 0, 0), Color = hull, Parent = m })
+	for _, x in ipairs({ -2, 2 }) do
+		P({ Size = Vector3.new(0.4, 1.6, 9), CFrame = cf * CFrame.new(x, 0.8, 0), Color = trim, Parent = m })
+	end
+	P({ Class = "WedgePart", Size = Vector3.new(4.4, 1.6, 2.6), CFrame = cf * CFrame.new(0, 0.8, -5.7), Color = hull, Parent = m })
+	P({ Size = Vector3.new(4.4, 1.6, 0.4), CFrame = cf * CFrame.new(0, 0.8, 4.6), Color = trim, Parent = m })
+	P({ Size = Vector3.new(3.6, 0.3, 1.2), CFrame = cf * CFrame.new(0, 1, 0.5), Color = WOOD, Material = Enum.Material.Wood, Parent = m })
+	for _, x in ipairs({ -1, 1 }) do
+		P({ Size = Vector3.new(0.25, 0.25, 5), CFrame = cf * CFrame.new(x * 2.6, 1.2, 0.5) * CFrame.Angles(0.3, x * 0.5, 0), Color = WOOD_DARK, Material = Enum.Material.Wood, Parent = m })
+	end
+end
+
+-- Фонарь: тёмный столб с кронштейном и застеклённым плафоном (мягкий свет, без «каши»)
 local function lantern(parent: Instance, pos: Vector3, height: number?)
-	local h = height or 5
-	P({ Size = Vector3.new(0.5, h, 0.5), Position = pos + Vector3.new(0, h / 2, 0), Color = rgb(70, 50, 35), Material = Enum.Material.Wood, Parent = parent })
-	local lamp = P({ Size = Vector3.new(1.1, 1.3, 1.1), Position = pos + Vector3.new(0, h + 0.4, 0), Color = rgb(255, 195, 110), Material = Enum.Material.Neon, CanCollide = false, Parent = parent })
-	P({ Size = Vector3.new(1.5, 0.3, 1.5), Position = pos + Vector3.new(0, h + 1.2, 0), Color = rgb(60, 45, 30), Material = Enum.Material.Wood, Parent = parent })
+	local h = height or 6
+	local dark = rgb(45, 40, 40)
+	P({ Size = Vector3.new(0.45, h, 0.45), Position = pos + Vector3.new(0, h / 2, 0), Color = dark, Material = Enum.Material.Metal, Parent = parent })
+	P({ Size = Vector3.new(1, 0.5, 1), Position = pos + Vector3.new(0, 0.25, 0), Color = dark, Material = Enum.Material.Metal, Parent = parent })
+	P({ Size = Vector3.new(1.3, 0.25, 1.3), Position = pos + Vector3.new(0, h + 1.5, 0), Color = dark, Material = Enum.Material.Metal, Parent = parent })
+	P({ Size = Vector3.new(1.05, 1.3, 1.05), Position = pos + Vector3.new(0, h + 0.75, 0), Color = rgb(255, 230, 180), Material = Enum.Material.Glass, Transparency = 0.45, CanCollide = false, Parent = parent })
+	local bulb = P({ Shape = Enum.PartType.Ball, Size = Vector3.new(0.45, 0.45, 0.45), Position = pos + Vector3.new(0, h + 0.75, 0), Color = rgb(255, 200, 120), Material = Enum.Material.Neon, CanCollide = false, Parent = parent })
 	local light = Instance.new("PointLight")
-	light.Color = rgb(255, 180, 100)
-	light.Range = 16
-	light.Brightness = 1.8
+	light.Color = rgb(255, 185, 110)
+	light.Range = 14
+	light.Brightness = 1.1
 	light.Shadows = false
-	light.Parent = lamp
+	light.Parent = bulb
 end
 
 -- Деревянный забор по отрезку: столбики + две доски
@@ -318,7 +435,7 @@ function World.SetBarTier(barModel: Model, tier: number)
 	end
 end
 
-local function pullUpBar(parent: Instance, cf: CFrame, index: number, withUpgrade: boolean): Model
+local function pullUpBar(parent: Instance, cf: CFrame, index: number): Model
 	local m = model("PullUpBar", parent)
 	for _, side in ipairs({ -1, 1 }) do
 		local post = P({ Size = Vector3.new(0.8, 10.4, 0.8), CFrame = cf * CFrame.new(side * 3.4, 5.2, 0), Parent = m })
@@ -353,18 +470,6 @@ local function pullUpBar(parent: Instance, cf: CFrame, index: number, withUpgrad
 	prompt.MaxActivationDistance = 9
 	prompt.RequiresLineOfSight = false
 	prompt.Parent = att
-	if withUpgrade then
-		local up = Instance.new("ProximityPrompt")
-		up.Name = "BarUpgrade"
-		up.ActionText = "Upgrade Bar"
-		up.ObjectText = "Gym"
-		up.KeyboardKeyCode = Enum.KeyCode.F
-		up.HoldDuration = 0
-		up.MaxActivationDistance = 9
-		up.RequiresLineOfSight = false
-		up.UIOffset = Vector2.new(0, 70)
-		up.Parent = att
-	end
 	local bb = billboard(bar, UDim2.fromOffset(170, 44), Vector3.new(0, 2.4, 0), 70)
 	label(bb, "💪 TRAIN", UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), rgb(255, 230, 90))
 	World.SetBarTier(m, 1)
@@ -463,19 +568,7 @@ local function buildTank(parent: Instance, cf: CFrame, tier: number, accent: Col
 	bubbles.SpreadAngle = Vector2.new(10, 10)
 	bubbles.LightEmission = 0.5
 	bubbles.Parent = water
-	-- кнопка улучшения у передней стенки
-	local att = Instance.new("Attachment")
-	att.Position = Vector3.new(0, -(H - 1.6) / 2 + 1, -D / 2)
-	att.Parent = water
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = "TankUpgrade"
-	prompt.ActionText = "Upgrade Aquarium"
-	prompt.ObjectText = "Aquarium"
-	prompt.KeyboardKeyCode = Enum.KeyCode.F
-	prompt.HoldDuration = 0
-	prompt.MaxActivationDistance = 10
-	prompt.RequiresLineOfSight = false
-	prompt.Parent = att
+	local prompt = nil
 	local fish = folder("Fish", m)
 	m:SetAttribute("Tier", tier)
 	m.Parent = parent
@@ -495,9 +588,6 @@ function World.RebuildTank(plot, tier: number)
 	plot.Tank:Destroy()
 	plot.Tank, plot.Water, plot.FishFolder, plot.TankPrompt = tank, water, fish, prompt
 	plot.TankTier = tier
-	if World.OnTankPrompt then
-		World.OnTankPrompt(plot)
-	end
 end
 
 -- ===== База игрока =====
@@ -550,7 +640,7 @@ local function buildBase(root: Instance, index: number)
 	local incomeLabel = label(bb, "", UDim2.fromScale(1, 0.5), UDim2.fromScale(0, 0.5), rgb(120, 255, 120))
 	incomeLabel.Name = "Income"
 	-- турник
-	local barModel = pullUpBar(m, cf * CFrame.new(15, 0.6, -10), index * 10 + 1, true)
+	local barModel = pullUpBar(m, cf * CFrame.new(15, 0.6, -10), index * 10 + 1)
 	-- фонари у ворот
 	lantern(m, L(-10.5, -D / 2 - 1.5), 6)
 	lantern(m, L(10.5, -D / 2 - 1.5), 6)
@@ -610,9 +700,14 @@ local function buildPier(root: Instance)
 	-- дорожка от площади к пирсу
 	local pathLen = PIER_START - 34
 	P({ Size = Vector3.new(10, 0.6, pathLen), CFrame = at(34 + pathLen / 2, 0, GROUND_Y + 0.2), Color = rgb(200, 160, 110), Material = Enum.Material.WoodPlanks, Parent = m })
-	for r = 44, PIER_START - 6, 16 do
-		lantern(m, (at(r, -6.5, GROUND_Y)).Position, 5)
-		lantern(m, (at(r + 8, 6.5, GROUND_Y)).Position, 5)
+	for r = 48, PIER_START - 6, 28 do
+		lantern(m, (at(r, -6.5, GROUND_Y)).Position, 6)
+		lantern(m, (at(r, 6.5, GROUND_Y)).Position, 6)
+	end
+	for r = 40, PIER_START - 4, 9 do
+		for _, side in ipairs({ -1, 1 }) do
+			grassTuft(m, (at(r + rng:NextNumber(-2, 2), side * rng:NextNumber(5.5, 8), GROUND_Y)).Position)
+		end
 	end
 	-- арка «FISHING PIER»
 	for _, s in ipairs({ -10.5, 10.5 }) do
@@ -633,10 +728,19 @@ local function buildPier(root: Instance)
 	for _, s in ipairs({ -PIER_W / 2 + 0.4, PIER_W / 2 - 0.4 }) do
 		fence(m, (at(PIER_START, s, DECK_Y)).Position, (at(PIER_END, s, DECK_Y)).Position, 3.4)
 	end
-	for r = PIER_START + 12, PIER_END - 6, 24 do
-		lantern(m, (at(r, -PIER_W / 2 + 1.2, DECK_Y)).Position, 5)
-		lantern(m, (at(r + 12, PIER_W / 2 - 1.2, DECK_Y)).Position, 5)
+	for r = PIER_START + 20, PIER_END - 6, 36 do
+		lantern(m, (at(r, -PIER_W / 2 + 1.2, DECK_Y)).Position, 6)
+		lantern(m, (at(r, PIER_W / 2 - 1.2, DECK_Y)).Position, 6)
 	end
+	-- бочки, ящики и лодки у пирса
+	barrel(m, (at(PIER_START + 6, -PIER_W / 2 + 2, DECK_Y)).Position)
+	barrel(m, (at(PIER_START + 8.5, -PIER_W / 2 + 2.3, DECK_Y)).Position)
+	crate(m, (at(PIER_START + 7, PIER_W / 2 - 2.2, DECK_Y)).Position)
+	crate(m, (at(PIER_END - 4, PIER_W / 2 - 2.2, DECK_Y)).Position, 2)
+	barrel(m, (at(PIER_END + 3, -END_W / 2 + 3, DECK_Y)).Position)
+	crate(m, (at(PIER_END + 3, END_W / 2 - 3, DECK_Y)).Position)
+	rowboat(m, at(PIER_START + 50, PIER_W / 2 + 4, Config.WaterY + 0.2) * CFrame.Angles(0, 0.15, 0))
+	rowboat(m, at(PIER_START + 85, -PIER_W / 2 - 4, Config.WaterY + 0.2) * CFrame.Angles(0, -0.2, 0))
 	-- широкая площадка на конце
 	local endR = PIER_END + END_DEPTH / 2
 	P({ Size = Vector3.new(END_W, 1, END_DEPTH), CFrame = at(endR, 0, DECK_Y - 0.5), Color = WOOD, Material = Enum.Material.WoodPlanks, Parent = m })
@@ -651,8 +755,8 @@ local function buildPier(root: Instance)
 	fence(m, (at(PIER_END + END_DEPTH - 0.4, -END_W / 2, DECK_Y)).Position, (at(PIER_END + END_DEPTH - 0.4, END_W / 2, DECK_Y)).Position, 2.4)
 	fence(m, (at(PIER_END + 0.4, -END_W / 2, DECK_Y)).Position, (at(PIER_END + 0.4, -PIER_W / 2, DECK_Y)).Position, 3.4)
 	fence(m, (at(PIER_END + 0.4, PIER_W / 2, DECK_Y)).Position, (at(PIER_END + 0.4, END_W / 2, DECK_Y)).Position, 3.4)
-	for _, s in ipairs({ -END_W / 2 + 1.2, END_W / 2 - 1.2 }) do
-		lantern(m, (at(PIER_END + END_DEPTH - 1.5, s, DECK_Y)).Position, 6)
+	for _, side in ipairs({ -END_W / 2 + 1.2, END_W / 2 - 1.2 }) do
+		lantern(m, (at(PIER_END + END_DEPTH - 1.5, side, DECK_Y)).Position, 7)
 	end
 	-- места для заброса
 	local spots = {}
@@ -663,10 +767,9 @@ local function buildPier(root: Instance)
 			Shape = Enum.PartType.Cylinder,
 			Size = Vector3.new(0.1, 5.5, 5.5),
 			CFrame = CFrame.new(dir * castR + right * s + Vector3.new(0, DECK_Y + 0.05, 0)) * CFrame.Angles(0, 0, math.pi / 2),
-			Color = rgb(90, 230, 255),
-			Material = Enum.Material.Neon,
-			Transparency = 0.35,
+			Transparency = 1,
 			CanCollide = false,
+			CanQuery = false,
 			Parent = m,
 		})
 		spot.Name = "CastSpot"
@@ -767,9 +870,13 @@ local function buildCenter(root: Instance)
 	statue:PivotTo(CFrame.new(0, GROUND_Y + 19, 0) * CFrame.Angles(0.35, math.rad(30), 0))
 	statue.Name = "MegalodonStatue"
 	statue.Parent = m
-	for i = 0, 5 do
-		local a = i / 6 * math.pi * 2
-		lantern(m, Vector3.new(math.cos(a) * 14, GROUND_Y, math.sin(a) * 14), 5)
+	for i = 0, 3 do
+		local a = i / 4 * math.pi * 2 + math.pi / 4
+		lantern(m, Vector3.new(math.cos(a) * 30, GROUND_Y, math.sin(a) * 30), 7)
+	end
+	for i = 0, 7 do
+		local a = i / 8 * math.pi * 2
+		flowerPatch(m, Vector3.new(math.cos(a) * 15, GROUND_Y + 0.6, math.sin(a) * 15), 6)
 	end
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Size = Vector3.new(10, 1, 10)
@@ -787,41 +894,70 @@ local function buildCenter(root: Instance)
 	kiosk(m, CFrame.lookAt(Vector3.new(-16, GROUND_Y, -30), Vector3.new(0, GROUND_Y, 0)), "SHOP", rgb(255, 140, 60), "ShopPrompt")
 	kiosk(m, CFrame.lookAt(Vector3.new(-16, GROUND_Y, 30), Vector3.new(0, GROUND_Y, 0)), "SELL FISH", rgb(80, 220, 120), "SellPrompt")
 	kiosk(m, CFrame.lookAt(Vector3.new(-34, GROUND_Y, 0), Vector3.new(0, GROUND_Y, 0)), "ROBUX SHOP", rgb(255, 210, 60), "StorePrompt")
-	local gymBars = {}
-	for i = 0, 3 do
-		local a = math.rad(130 + i * 33)
-		local p = Vector3.new(math.cos(a) * 42, GROUND_Y, math.sin(a) * 42)
-		local bm = pullUpBar(m, CFrame.lookAt(p, Vector3.new(0, GROUND_Y, 0)), 900 + i, false)
-		World.SetBarTier(bm, 2)
-		table.insert(gymBars, bm:FindFirstChild("Bar"))
-	end
-	World.GymBars = gymBars
+	World.GymBars = {}
 end
 
 local function buildDecor(root: Instance)
 	local m = model("Decor", root)
+	local grass = model("Grass", root)
 	for i = 1, Config.PlotCount - 1 do
 		-- между базами (угол 0 — пирс, там пусто)
 		local a = i / Config.PlotCount * math.pi * 2
 		local dir = Vector3.new(math.cos(a), 0, math.sin(a))
-		for _, r in ipairs({ 80, 104, 124, 146 }) do
-			local jitter = Vector3.new(rng:NextNumber(-4, 4), 0, rng:NextNumber(-4, 4))
+		local side = Vector3.new(-dir.Z, 0, dir.X)
+		for _, r in ipairs({ 78, 106, 126, 148 }) do
+			local jitter = side * rng:NextNumber(-4, 4) + dir * rng:NextNumber(-3, 3)
 			local y = r > 128 and 2 or GROUND_Y
 			palm(m, dir * r + jitter + Vector3.new(0, y - 0.5, 0), rng:NextNumber(14, 22))
 		end
-		bush(m, dir * 92 + Vector3.new(rng:NextNumber(-3, 3), GROUND_Y, rng:NextNumber(-3, 3)))
-		bush(m, dir * 60 + Vector3.new(rng:NextNumber(-3, 3), GROUND_Y, rng:NextNumber(-3, 3)))
-		lantern(m, dir * 112 + Vector3.new(0, GROUND_Y, 0), 6)
+		bush(m, dir * 92 + side * rng:NextNumber(-3, 3) + Vector3.new(0, GROUND_Y, 0))
+		bush(m, dir * 64 + side * rng:NextNumber(-3, 3) + Vector3.new(0, GROUND_Y, 0), 3)
+		flowerPatch(m, dir * 115 + side * 3 + Vector3.new(0, GROUND_Y, 0), 7)
+		flowerPatch(m, dir * 70 - side * 4 + Vector3.new(0, GROUND_Y, 0), 5)
+		rocks(m, dir * 158 + side * rng:NextNumber(-6, 6) + Vector3.new(0, 1.5, 0), 1.2)
+		if i % 2 == 0 then
+			beachSet(m, dir * 150 + side * 9 + Vector3.new(0, 2, 0), dir)
+		end
+		for _ = 1, 3 do
+			starfish(m, dir * rng:NextNumber(138, 160) + side * rng:NextNumber(-14, 14) + Vector3.new(0, 2, 0))
+		end
+	end
+	-- трава по всему острову (не на базах, не на площади и не на дорожке)
+	local placed = 0
+	local tries = 0
+	while placed < 420 and tries < 4000 do
+		tries += 1
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = math.sqrt(rng:NextNumber(0.1, 1)) * 128
+		local p = Vector3.new(math.cos(a) * r, GROUND_Y, math.sin(a) * r)
+		local ok = r > 38 and not (p.X > 30 and math.abs(p.Z) < 9)
+		if ok then
+			for _, plot in ipairs(World.Plots) do
+				local rel = plot.CFrame:PointToObjectSpace(p)
+				if math.abs(rel.X) < 25 and math.abs(rel.Z) < 23 then
+					ok = false
+					break
+				end
+			end
+		end
+		if ok then
+			grassTuft(grass, p)
+			placed += 1
+		end
 	end
 	for _, s in ipairs({ -1, 1 }) do
 		palm(m, Vector3.new(150, 1.5, s * 26), 20)
 		palm(m, Vector3.new(135, 1.5, s * 34), 17)
+		rocks(m, Vector3.new(162, 0.5, s * 22), 1.4)
 	end
 	World.Lighthouse = lighthouse(m, Vector3.new(-158, 0, 0))
 end
 
 function World.Build()
 	setupLighting()
+	pcall(function()
+		(workspace.Terrain :: any).Decoration = true
+	end)
 	buildTerrain()
 	local root = folder("Map", workspace)
 	local plots = folder("Plots", workspace)

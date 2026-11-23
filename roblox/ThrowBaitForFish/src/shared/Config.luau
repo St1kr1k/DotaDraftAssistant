@@ -65,10 +65,13 @@ Config.PowerPerRep = 1
 
 -- ===== Аквариум =====
 Config.BaseTankSlots = 8
-Config.SlotsPerUpgrade = 2
-Config.MaxTankUpgrades = 16
+-- Редкие большие улучшения аквариума: каждое +6 мест и полностью новый вид
+Config.SlotsPerUpgrade = 6
+Config.MaxTankUpgrades = 4
+Config.TankUpgradeCosts = { 2500, 75000, 2500000, 90000000 }
+Config.TankUpgradeNames = { "Wooden Tank", "Reef Tank", "Golden Tank", "Neon Tank", "Royal Tank" }
 function Config.TankUpgradeCost(level: number): number
-	return math.floor(150 * 2.25 ^ level)
+	return Config.TankUpgradeCosts[level + 1] or math.huge
 end
 Config.SellSeconds = 25 -- рыба продаётся за 25 секунд своего дохода
 

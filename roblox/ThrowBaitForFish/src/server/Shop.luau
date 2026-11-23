@@ -68,34 +68,6 @@ function Shop.Init()
 		return Shop.BuyGear(player)
 	end
 
-	-- кнопки улучшения прямо на базе
-	local function bindPlot(plot)
-		if plot.TankPrompt and not plot.TankPrompt:GetAttribute("Bound") then
-			plot.TankPrompt:SetAttribute("Bound", true)
-			plot.TankPrompt.Triggered:Connect(function(player)
-				if plot.Owner ~= player then
-					PlayerService.Notify(player, "This is not your base!", Color3.fromRGB(255, 120, 90))
-					return
-				end
-				local res = Shop.UpgradeTank(player)
-				PlayerService.Notify(player, res.ok and "🐠 Aquarium upgraded!" or res.msg, res.ok and Color3.fromRGB(120, 255, 120) or Color3.fromRGB(255, 120, 90))
-			end)
-		end
-	end
-	for _, plot in ipairs(World.Plots) do
-		bindPlot(plot)
-		if plot.BarPrompt then
-			plot.BarPrompt.Triggered:Connect(function(player)
-				if plot.Owner ~= player then
-					PlayerService.Notify(player, "This is not your base!", Color3.fromRGB(255, 120, 90))
-					return
-				end
-				local res = Shop.BuyGear(player)
-				PlayerService.Notify(player, res.ok and ("🏋️ Got " .. tostring(res.name) .. "!") or res.msg, res.ok and Color3.fromRGB(120, 255, 120) or Color3.fromRGB(255, 120, 90))
-			end)
-		end
-	end
-	World.OnTankPrompt = bindPlot
 	Shop.InitSelling()
 end
 

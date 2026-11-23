@@ -149,20 +149,11 @@ function PlayerService.UpdateBase(player: Player)
 		l.Text = string.upper(player.DisplayName) .. "'S BASE"
 		l.TextColor3 = plot.Color
 	end
-	local tier = math.min(4, math.floor((profile.TankLevel or 0) / 4))
+	local tier = math.min(4, profile.TankLevel or 0)
 	if tier ~= plot.TankTier then
 		World.RebuildTank(plot, tier)
 	end
 	World.SetBarTier(plot.BarModel, profile.Gear or 1)
-	if (profile.TankLevel or 0) >= Config.MaxTankUpgrades then
-		plot.TankPrompt.ActionText = "Aquarium MAX"
-	else
-		plot.TankPrompt.ActionText = "Upgrade +" .. Config.SlotsPerUpgrade .. " slots (" .. Format.Money(Config.TankUpgradeCost(profile.TankLevel or 0)) .. ")"
-	end
-	local nextGear = GameData.Gear[(profile.Gear or 1) + 1]
-	if plot.BarPrompt then
-		plot.BarPrompt.ActionText = nextGear and ("Upgrade to " .. nextGear.Id .. " (" .. Format.Money(nextGear.Price) .. ")") or "Bar MAX"
-	end
 	PlayerService.UpdateSign(player)
 end
 
@@ -175,10 +166,6 @@ function PlayerService.ResetBase(plot)
 		World.RebuildTank(plot, 0)
 	end
 	World.SetBarTier(plot.BarModel, 1)
-	plot.TankPrompt.ActionText = "Upgrade Aquarium"
-	if plot.BarPrompt then
-		plot.BarPrompt.ActionText = "Upgrade Bar"
-	end
 end
 
 -- ===== Удочка в руке =====
@@ -320,6 +307,8 @@ function PlayerService.OnJoin(player: Player, applyPasses: (Player) -> ())
 	if not profile then
 		return
 	end
+	-- старые уровни аквариума (было 16 мелких) -> новые 4 больших
+	profile.TankLevel = math.clamp(profile.TankLevel or 0, 0, Config.MaxTankUpgrades)
 	-- старые записи без Uid
 	for _, f in ipairs(profile.Fish) do
 		if not f.U then

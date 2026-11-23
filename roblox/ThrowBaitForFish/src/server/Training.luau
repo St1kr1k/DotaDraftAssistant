@@ -19,26 +19,60 @@ local occupied = {} :: { [BasePart]: Player }
 
 -- Суставы R15 для позы на турнике: имя части -> имя сустава
 local JOINTS = {
-	{ Part = "RightUpperArm", Joint = "RightShoulder", Kind = "Shoulder", Side = 1 },
-	{ Part = "LeftUpperArm", Joint = "LeftShoulder", Kind = "Shoulder", Side = -1 },
-	{ Part = "RightLowerArm", Joint = "RightElbow", Kind = "Elbow", Side = 1 },
-	{ Part = "LeftLowerArm", Joint = "LeftElbow", Kind = "Elbow", Side = -1 },
 	{ Part = "RightUpperLeg", Joint = "RightHip", Kind = "Hip", Side = 1 },
 	{ Part = "LeftUpperLeg", Joint = "LeftHip", Kind = "Hip", Side = -1 },
 	{ Part = "RightLowerLeg", Joint = "RightKnee", Kind = "Knee", Side = 1 },
 	{ Part = "LeftLowerLeg", Joint = "LeftKnee", Kind = "Knee", Side = -1 },
 }
 
+-- Руки держатся за перекладину через IK: кисти прибиты к точкам на перекладине,
+-- локти сгибаются сами, когда тело поднимается. Работает на любом R15-аватаре.
+local function setupIK(character: Model, bar: BasePart)
+	local created = {}
+	local hum = character:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return created
+	end
+	for _, side in ipairs({ "Right", "Left" }) do
+		local upper = character:FindFirstChild(side .. "UpperArm")
+		local hand = character:FindFirstChild(side .. "Hand")
+		if upper and hand then
+			local x = side == "Right" and 1.35 or -1.35
+			local target = Instance.new("Attachment")
+			target.Name = "IKTarget_" .. side
+			-- ось цилиндра-перекладины = локальная X; игрок смотрит в -Z
+			target.Position = Vector3.new(x, -0.25, 0)
+			target.Parent = bar
+			local pole = Instance.new("Attachment")
+			pole.Name = "IKPole_" .. side
+			-- локти уходят в стороны и назад
+			pole.Position = Vector3.new(x * 2.6, -3.5, 2.5)
+			pole.Parent = bar
+			local ik = Instance.new("IKControl")
+			ik.Name = "PullUpIK_" .. side
+			ik.Type = Enum.IKControlType.Position
+			ik.ChainRoot = upper
+			ik.EndEffector = hand
+			ik.Target = target
+			ik.Pole = pole
+			ik.Weight = 1
+			ik.SmoothTime = 0.05
+			ik.Parent = hum
+			table.insert(created, ik)
+			table.insert(created, target)
+			table.insert(created, pole)
+		end
+	end
+	return created
+end
+
 -- Поза: top = false — вис на прямых руках, true — подбородок над перекладиной
 local function poseOffset(kind: string, side: number, top: boolean): CFrame
-	if kind == "Shoulder" then
-		return top and CFrame.Angles(math.rad(140), 0, side * 0.6) or CFrame.Angles(math.rad(176), 0, side * 0.28)
-	elseif kind == "Elbow" then
-		return top and CFrame.Angles(math.rad(95), 0, 0) or CFrame.Angles(math.rad(8), 0, 0)
-	elseif kind == "Hip" then
-		return top and CFrame.Angles(math.rad(35), 0, 0) or CFrame.Angles(math.rad(14), 0, 0)
+	local _ = side
+	if kind == "Hip" then
+		return top and CFrame.Angles(math.rad(40), 0, 0) or CFrame.Angles(math.rad(12), 0, 0)
 	elseif kind == "Knee" then
-		return top and CFrame.Angles(math.rad(-80), 0, 0) or CFrame.Angles(math.rad(-55), 0, 0)
+		return top and CFrame.Angles(math.rad(-85), 0, 0) or CFrame.Angles(math.rad(-40), 0, 0)
 	end
 	return CFrame.identity
 end
@@ -92,6 +126,9 @@ local function stop(player: Player)
 		end
 		PlayerService.SetRodVisible(character, true)
 	end
+	for _, inst in ipairs(state.IK or {}) do
+		inst:Destroy()
+	end
 end
 
 local function doRep(player: Player, fromClick: boolean)
@@ -113,7 +150,7 @@ local function doRep(player: Player, fromClick: boolean)
 		local upTime = fromClick and 0.17 or 0.32
 		local downTime = fromClick and 0.22 or 0.45
 		applyPose(state.SavedC0, true, upTime)
-		local up = TweenService:Create(root, TweenInfo.new(upTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = state.HangCf * CFrame.new(0, 1.5, 0) })
+		local up = TweenService:Create(root, TweenInfo.new(upTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = state.HangCf * CFrame.new(0, 1.9, 0) })
 		up:Play()
 		up.Completed:Connect(function()
 			if not session.Training then
@@ -148,15 +185,21 @@ local function start(player: Player, bar: BasePart)
 	if not root or not humanoid or humanoid.Health <= 0 then
 		return
 	end
-	local hangCf = bar.CFrame * CFrame.new(0, -3.3, 0) -- ориентация турника: смотрим наружу
+	local hangCf = bar.CFrame * CFrame.new(0, -3.6, 0) -- ориентация турника: смотрим наружу
 	hangCf = CFrame.lookAt(hangCf.Position, hangCf.Position + bar.CFrame.LookVector)
+	local plot = World.PlotOf(player)
+	if not plot or plot.Bars[1] ~= bar then
+		PlayerService.Notify(player, "💪 Train on the bar at YOUR base!", Color3.fromRGB(255, 200, 90))
+		return
+	end
 	local saved = collectJoints(character)
 	applyPose(saved, false, 0.2)
+	local ik = setupIK(character, bar)
 	root.Anchored = true
 	root.CFrame = hangCf
 	PlayerService.SetRodVisible(character, false)
 	occupied[bar] = player
-	session.Training = { Bar = bar, HangCf = hangCf, SavedC0 = saved, NextAfk = os.clock() + Config.AfkRepInterval }
+	session.Training = { Bar = bar, HangCf = hangCf, SavedC0 = saved, IK = ik, NextAfk = os.clock() + Config.AfkRepInterval }
 	player:SetAttribute("Training", true)
 end
 

@@ -416,6 +416,138 @@ local function incomePopup()
 	Debris:AddItem(anchor, 1.7)
 end
 
+-- ===== Сцена улучшения базы =====
+local function upgradeBanner(parent: BasePart, line1: string, line2: string, color: Color3)
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.fromOffset(520, 150)
+	bb.StudsOffset = Vector3.new(0, 6, 0)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.Parent = parent
+	local function line(text: string, y: number, h: number, col: Color3)
+		local t = Instance.new("TextLabel")
+		t.BackgroundTransparency = 1
+		t.Size = UDim2.new(1, 0, h, 0)
+		t.Position = UDim2.fromScale(0, y)
+		t.Font = Enum.Font.LuckiestGuy
+		t.TextScaled = true
+		t.Text = text
+		t.TextColor3 = col
+		t.TextStrokeTransparency = 0
+		t.Parent = bb
+		local sc = Instance.new("UIScale")
+		sc.Scale = 0.1
+		sc.Parent = t
+		TweenService:Create(sc, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+	end
+	line(line1, 0, 0.55, color)
+	line(line2, 0.58, 0.42, Color3.fromRGB(255, 255, 255))
+	return bb
+end
+
+function Effects.UpgradeCutscene(kind: string, title: string, oldTank: Instance?)
+	local plot = ClientState.MyPlot()
+	local cam = workspace.CurrentCamera
+	if not plot or not cam then
+		return
+	end
+	-- дождаться новой модели аквариума с сервера
+	local target: Instance? = nil
+	local t0 = os.clock()
+	if kind == "Tank" then
+		repeat
+			local t = plot:FindFirstChild("Tank")
+			if t and t ~= oldTank then
+				target = t
+			end
+			task.wait(0.05)
+		until target or os.clock() - t0 > 2
+	else
+		target = plot:FindFirstChild("PullUpBar")
+	end
+	if not target then
+		return
+	end
+	local cf, size = (target :: Model):GetBoundingBox()
+	local center = cf.Position
+	local color = kind == "Tank" and Color3.fromRGB(90, 220, 255) or Color3.fromRGB(255, 190, 60)
+
+	-- спрятать детали, чтобы потом «собрать»
+	local parts = {}
+	for _, d in ipairs(target:GetDescendants()) do
+		if d:IsA("BasePart") and d.Anchored and not d:FindFirstAncestor("Fish") then
+			table.insert(parts, { part = d, cf = d.CFrame })
+			d.LocalTransparencyModifier = 1
+		end
+	end
+	table.sort(parts, function(a, b)
+		return a.cf.Position.Y < b.cf.Position.Y
+	end)
+
+	-- камера облетает базу
+	local savedType = cam.CameraType
+	cam.CameraType = Enum.CameraType.Scriptable
+	local radius = math.max(22, size.Magnitude * 1.1)
+	local baseYaw = math.atan2((cam.CFrame.Position - center).X, (cam.CFrame.Position - center).Z)
+	local duration = 3.4
+	local running = true
+	task.spawn(function()
+		local s0 = os.clock()
+		while running do
+			local k = math.min(1, (os.clock() - s0) / duration)
+			local yaw = baseYaw + k * 1.6
+			local pos = center + Vector3.new(math.sin(yaw) * radius, radius * 0.45, math.cos(yaw) * radius)
+			cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(pos, center + Vector3.new(0, 2, 0)), 0.12)
+			RunService.RenderStepped:Wait()
+		end
+	end)
+
+	task.wait(0.5)
+	-- столб света и вспышка
+	local pillar = anchoredPart({ Shape = Enum.PartType.Cylinder, Size = Vector3.new(200, 2, 2), CFrame = CFrame.new(center) * CFrame.Angles(0, 0, math.pi / 2), Color = color, Material = Enum.Material.Neon, Transparency = 0.2 })
+	TweenService:Create(pillar, TweenInfo.new(0.5, Enum.EasingStyle.Quad), { Size = Vector3.new(200, size.X * 0.9, size.X * 0.9), Transparency = 0.75 }):Play()
+	local flashCc = Instance.new("ColorCorrectionEffect")
+	flashCc.Brightness = 0.6
+	flashCc.TintColor = color
+	flashCc.Parent = Lighting
+	TweenService:Create(flashCc, TweenInfo.new(0.8), { Brightness = 0, TintColor = Color3.new(1, 1, 1) }):Play()
+	Debris:AddItem(flashCc, 1)
+
+	-- детали падают на место по очереди
+	local stagger = math.min(0.03, 1.2 / math.max(1, #parts))
+	for i, p in ipairs(parts) do
+		local part = p.part :: BasePart
+		if part.Parent then
+			part.CFrame = p.cf * CFrame.new(0, 10 + (i % 5), 0) * CFrame.Angles(0, (i % 2 == 0) and 0.6 or -0.6, 0)
+			TweenService:Create(part, TweenInfo.new(0.45, Enum.EasingStyle.Bounce), { CFrame = p.cf, LocalTransparencyModifier = 0 }):Play()
+		end
+		if i % 6 == 0 then
+			task.wait(stagger * 6)
+		end
+	end
+	task.wait(0.4)
+	Effects.Burst(center + Vector3.new(0, 4, 0), color, 120)
+	Effects.Burst(center + Vector3.new(0, 8, 0), Color3.fromRGB(255, 255, 255), 60)
+	local banner = upgradeBanner(pillar, kind == "Tank" and "AQUARIUM UPGRADED!" or "NEW PULL-UP BAR!", title, color)
+	TweenService:Create(pillar, TweenInfo.new(1.6), { Transparency = 1 }):Play()
+	task.wait(1.8)
+	banner:Destroy()
+	pillar:Destroy()
+	for _, p in ipairs(parts) do
+		if p.part.Parent then
+			p.part.CFrame = p.cf
+			p.part.LocalTransparencyModifier = 0
+		end
+	end
+	running = false
+	cam.CameraType = savedType == Enum.CameraType.Scriptable and Enum.CameraType.Custom or savedType
+	local character = player.Character
+	local hum = character and character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		cam.CameraSubject = hum
+	end
+end
+
 function Effects.Init()
 	Remotes.Get("CastFx").OnClientEvent:Connect(otherCast)
 

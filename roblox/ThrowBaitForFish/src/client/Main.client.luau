@@ -20,6 +20,7 @@ UI.Init()
 Effects.Init()
 Fishing.Init()
 Training.Init()
+UI.Callbacks.UpgradeCutscene = Effects.UpgradeCutscene
 
 pcall(function()
 	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)

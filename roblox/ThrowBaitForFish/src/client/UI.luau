@@ -335,7 +335,7 @@ local function openWindow(name: string, title: string, c1: Color3, c2: Color3)
 		Name = name,
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(640, 450),
+		Size = UDim2.fromOffset(860, 580),
 		BackgroundColor3 = C.Panel,
 		Parent = windowHolder,
 	})
@@ -389,45 +389,8 @@ renderers.Shop = function(body: Frame)
 		return
 	end
 	local cash = ClientState.Cash()
-	-- аквариум
-	local tank = panel({ Size = UDim2.new(1, 0, 0, 70), BackgroundColor3 = C.Panel2, Parent = body })
-	text({ Text = "🐠 Aquarium: " .. #data.Fish .. "/" .. data.Capacity .. " fish", Size = UDim2.new(0.6, 0, 0, 34), Position = UDim2.fromOffset(12, 6), TextXAlignment = Enum.TextXAlignment.Left, MaxText = 26, Parent = tank })
-	text({ Text = "Upgrade: +" .. Config.SlotsPerUpgrade .. " slots", Size = UDim2.new(0.6, 0, 0, 22), Position = UDim2.fromOffset(12, 40), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Gray, MaxText = 18, Parent = tank })
-	if data.TankLevel >= Config.MaxTankUpgrades then
-		button({ Text = "MAX", Size = UDim2.fromOffset(190, 52), Position = UDim2.new(1, -200, 0, 9), C1 = C.Gray, C2 = C.Gray2 }).Parent = tank
-	else
-		local cost = Config.TankUpgradeCost(data.TankLevel)
-		local can = cash >= cost
-		button({ Text = Format.Money(cost), Size = UDim2.fromOffset(190, 52), Position = UDim2.new(1, -200, 0, 9), C1 = can and C.Green or C.Gray, C2 = can and C.Green2 or C.Gray2 }, function()
-			local res = Remotes.Get("UpgradeTank"):InvokeServer()
-			if res and not res.ok then
-				UI.Toast(res.msg, C.Red)
-			else
-				UI.Toast("🐠 Aquarium upgraded!", C.Green)
-			end
-		end).Parent = tank
-	end
-	-- спортзал
-	local gearPanel = panel({ Size = UDim2.new(1, 0, 0, 70), Position = UDim2.fromOffset(0, 78), BackgroundColor3 = C.Panel2, Parent = body })
-	local curGear = GameData.Gear[data.Gear or 1]
-	local nextGear = GameData.Gear[(data.Gear or 1) + 1]
-	text({ Text = "🏋️ " .. curGear.Id .. "  (x" .. curGear.Mult .. " 💪)", Size = UDim2.new(0.6, 0, 0, 34), Position = UDim2.fromOffset(12, 6), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = curGear.Color, MaxText = 26, Parent = gearPanel })
-	text({ Text = nextGear and ("Next: " .. nextGear.Id .. " — x" .. nextGear.Mult .. " power per pull-up") or "Best gear owned!", Size = UDim2.new(0.6, 0, 0, 22), Position = UDim2.fromOffset(12, 40), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Gray, MaxText = 18, Parent = gearPanel })
-	if nextGear then
-		local can = cash >= nextGear.Price
-		button({ Text = Format.Money(nextGear.Price), Size = UDim2.fromOffset(190, 52), Position = UDim2.new(1, -200, 0, 9), C1 = can and C.Green or C.Gray, C2 = can and C.Green2 or C.Gray2 }, function()
-			local res = Remotes.Get("BuyGear"):InvokeServer()
-			if res and not res.ok then
-				UI.Toast(res.msg, C.Red)
-			elseif res then
-				UI.Toast("🏋️ Got " .. tostring(res.name) .. "!", C.Green)
-			end
-		end).Parent = gearPanel
-	else
-		button({ Text = "MAX", Size = UDim2.fromOffset(190, 52), Position = UDim2.new(1, -200, 0, 9), C1 = C.Gray, C2 = C.Gray2 }).Parent = gearPanel
-	end
 	-- наживки
-	local list = scroller(body, UDim2.new(1, 0, 1, -158), UDim2.fromOffset(0, 158))
+	local list = scroller(body, UDim2.fromScale(1, 1))
 	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
 	new("UIPadding", { PaddingRight = UDim.new(0, 12), PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2), Parent = list })
 	for i, bait in ipairs(GameData.Baits) do
@@ -618,6 +581,72 @@ renderers.Store = function(body: Frame)
 	local _ = data
 end
 
+-- Улучшения базы: редкие, дорогие, с эффектной сценой
+local function upgradeCard(parent: Instance, order: number, title: string, icon: string, color1: Color3, color2: Color3, current: string, nextText: string?, bonus: string, price: number?, onBuy: () -> ())
+	local card = panel({ BackgroundColor3 = C.Panel2, LayoutOrder = order, Parent = parent })
+	local head = new("Frame", { Size = UDim2.new(1, 0, 0, 54), BackgroundColor3 = C.White, BorderSizePixel = 0, Parent = card })
+	corner(16).Parent = head
+	grad(color1, color2).Parent = head
+	text({ Text = title, Size = UDim2.new(1, -20, 1, -10), Position = UDim2.fromOffset(10, 5), Font = Enum.Font.LuckiestGuy, MaxText = 34, StrokeThickness = 3.5, Parent = head })
+	text({ Text = icon, Size = UDim2.new(1, 0, 0, 110), Position = UDim2.fromOffset(0, 62), MaxText = 96, StrokeThickness = 0, Parent = card })
+	text({ Text = current, Size = UDim2.new(1, -20, 0, 34), Position = UDim2.fromOffset(10, 176), Font = Enum.Font.LuckiestGuy, MaxText = 30, StrokeThickness = 3, Parent = card })
+	text({ Text = nextText and ("NEXT: " .. nextText) or "MAX LEVEL!", Size = UDim2.new(1, -20, 0, 28), Position = UDim2.fromOffset(10, 214), Font = Enum.Font.LuckiestGuy, TextColor3 = C.Gold, MaxText = 24, StrokeThickness = 3, Parent = card })
+	text({ Text = bonus, Size = UDim2.new(1, -20, 0, 26), Position = UDim2.fromOffset(10, 246), TextColor3 = Color3.fromRGB(170, 255, 170), MaxText = 22, Parent = card })
+	if price then
+		local can = ClientState.Cash() >= price
+		button({ Text = "UPGRADE  " .. Format.Money(price), Size = UDim2.new(1, -24, 0, 66), Position = UDim2.new(0, 12, 1, -78), C1 = can and C.Green or C.Gray, C2 = can and C.Green2 or C.Gray2, MaxText = 32 }, onBuy).Parent = card
+	else
+		button({ Text = "MAXED", Size = UDim2.new(1, -24, 0, 66), Position = UDim2.new(0, 12, 1, -78), C1 = C.Gray, C2 = C.Gray2, MaxText = 32 }).Parent = card
+	end
+end
+
+renderers.Upgrade = function(body: Frame)
+	local data = ClientState.Data
+	if not data then
+		return
+	end
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = body })
+	new("UIGridLayout", { CellSize = UDim2.new(0.5, -8, 1, 0), CellPadding = UDim2.fromOffset(16, 0), SortOrder = Enum.SortOrder.LayoutOrder, Parent = row })
+	local lvl = data.TankLevel or 0
+	local maxed = lvl >= Config.MaxTankUpgrades
+	upgradeCard(row, 1, "AQUARIUM", "🐠", C.Blue, C.Blue2,
+		Config.TankUpgradeNames[lvl + 1] .. "  •  " .. data.Capacity .. " slots",
+		(not maxed) and Config.TankUpgradeNames[lvl + 2] or nil,
+		maxed and "Your tank is legendary!" or ("+" .. Config.SlotsPerUpgrade .. " slots + brand new look"),
+		(not maxed) and Config.TankUpgradeCost(lvl) or nil,
+		function()
+			local myPlot = ClientState.MyPlot()
+			local oldTank = myPlot and myPlot:FindFirstChild("Tank")
+			local res = Remotes.Get("UpgradeTank"):InvokeServer()
+			if res and res.ok then
+				closeWindow()
+				if UI.Callbacks.UpgradeCutscene then
+					task.spawn(UI.Callbacks.UpgradeCutscene, "Tank", Config.TankUpgradeNames[lvl + 2], oldTank)
+				end
+			elseif res then
+				UI.Toast(res.msg, C.Red)
+			end
+		end)
+	local gear = GameData.Gear[data.Gear or 1]
+	local nextGear = GameData.Gear[(data.Gear or 1) + 1]
+	upgradeCard(row, 2, "PULL-UP BAR", "🏋️", C.Orange, C.Orange2,
+		gear.Id .. "  •  x" .. gear.Mult .. " power",
+		nextGear and nextGear.Id or nil,
+		nextGear and ("x" .. nextGear.Mult .. " power per pull-up!") or "Strongest bar in the ocean!",
+		nextGear and nextGear.Price or nil,
+		function()
+			local res = Remotes.Get("BuyGear"):InvokeServer()
+			if res and res.ok then
+				closeWindow()
+				if UI.Callbacks.UpgradeCutscene then
+					task.spawn(UI.Callbacks.UpgradeCutscene, "Bar", tostring(res.name))
+				end
+			elseif res then
+				UI.Toast(res.msg, C.Red)
+			end
+		end)
+end
+
 function UI.OpenWindow(name: string)
 	if name == "Shop" then
 		openWindow("Shop", "🛒 Shop", C.Orange, C.Orange2)
@@ -625,6 +654,8 @@ function UI.OpenWindow(name: string)
 		openWindow("Aquarium", "🐠 My Aquarium", C.Blue, C.Blue2)
 	elseif name == "Index" then
 		openWindow("Index", "📖 Fish Index", C.Purple, C.Purple2)
+	elseif name == "Upgrade" then
+		openWindow("Upgrade", "⬆️ Base Upgrades", C.Green, C.Green2)
 	elseif name == "Store" then
 		openWindow("Store", "💎 Store", C.Gold, C.Gold2)
 	end
@@ -654,6 +685,8 @@ local trainFrame: Frame
 local trainLabel: TextLabel
 local trainUpsell: TextButton
 local pierButton: TextButton
+local upgradeButton: TextButton
+local powerFrameRef: Frame
 local displayedCash = 0
 
 local function buildHud()
@@ -671,7 +704,7 @@ local function buildHud()
 	luckLabel = text({ Size = UDim2.new(1, -12, 1, -6), Position = UDim2.fromOffset(6, 3), MaxText = 20, Parent = luckBanner })
 
 	-- левое меню: яркие квадратные кнопки в 2 столбца
-	local menu = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 14, 0.5, 40), Size = UDim2.fromOffset(180, 280), BackgroundTransparency = 1, Parent = gui })
+	local menu = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 14, 0.5, 60), Size = UDim2.fromOffset(190, 390), BackgroundTransparency = 1, Parent = gui })
 	scaleable(menu)
 	new("UIGridLayout", { CellSize = UDim2.fromOffset(84, 84), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = menu })
 	local function goTo(remote: string)
@@ -683,12 +716,13 @@ local function buildHud()
 		end
 	end
 	local items = {
+		{ "⬆️", "UPGRADE", C.Green, C.Green2, function() UI.OpenWindow("Upgrade") end },
 		{ "🛒", "SHOP", C.Orange, C.Orange2, function() UI.OpenWindow("Shop") end },
 		{ "💎", "STORE", C.Gold, C.Gold2, function() UI.OpenWindow("Store") end },
 		{ "🐠", "TANK", C.Blue, C.Blue2, function() UI.OpenWindow("Aquarium") end },
 		{ "📖", "INDEX", C.Purple, C.Purple2, function() UI.OpenWindow("Index") end },
 		{ "🎣", "PIER", Color3.fromRGB(80, 230, 230), Color3.fromRGB(20, 150, 170), goTo("GoToPier") },
-		{ "🏠", "BASE", C.Green, C.Green2, goTo("GoToBase") },
+		{ "🏠", "BASE", Color3.fromRGB(120, 200, 255), Color3.fromRGB(60, 130, 230), goTo("GoToBase") },
 	}
 	for i, it in ipairs(items) do
 		local b = button({ Text = "", LayoutOrder = i, C1 = it[3], C2 = it[4], Corner = 16 }, it[5])
@@ -698,6 +732,9 @@ local function buildHud()
 		text({ Text = it[2], Size = UDim2.new(1, -8, 0.3, 0), Position = UDim2.new(0, 4, 0.64, 0), Font = Enum.Font.LuckiestGuy, MaxText = 22, StrokeThickness = 3, Parent = b })
 		if it[2] == "PIER" then
 			pierButton = b
+		end
+		if it[2] == "UPGRADE" then
+			upgradeButton = b
 		end
 		if it[2] == "STORE" then
 			task.spawn(function()
@@ -713,7 +750,8 @@ local function buildHud()
 	end
 
 	-- сила внизу
-	local powerFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(460, 70), BackgroundColor3 = C.Panel, Parent = gui })
+	local powerFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(500, 76), BackgroundColor3 = C.Panel, Parent = gui })
+	powerFrameRef = powerFrame
 	scaleable(powerFrame)
 	powerLabel = text({ Text = "💪 0 Power", Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 4), MaxText = 26, Font = Enum.Font.LuckiestGuy, StrokeThickness = 3, Parent = powerFrame })
 	local bar = new("Frame", { Size = UDim2.new(1, -24, 0, 26), Position = UDim2.fromOffset(12, 38), BackgroundColor3 = C.Panel2, Parent = powerFrame })
@@ -760,6 +798,17 @@ local function buildHud()
 		UI.Refresh()
 	end)
 	autoButton.Parent = gui
+	-- на ПК забрасывают мышью, большая кнопка CAST нужна только на телефоне
+	local UserInputService = game:GetService("UserInputService")
+	if not UserInputService.TouchEnabled or UserInputService.KeyboardEnabled then
+		castButton.Visible = false
+		autoButton.Position = UDim2.new(1, -18, 1, -18)
+		autoButton.Size = UDim2.fromOffset(170, 50)
+		luckyBadge.Parent = gui
+		luckyBadge.AnchorPoint = Vector2.new(1, 1)
+		luckyBadge.Position = UDim2.new(1, -24, 1, -76)
+		luckyBadge.Size = UDim2.fromOffset(160, 34)
+	end
 	scaleable(autoButton)
 
 	-- полоска заряда
@@ -783,7 +832,7 @@ local function buildHud()
 	grad(C.Green, C.Green2).Parent = reelFill
 
 	-- тренировка
-	trainFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -92), Size = UDim2.fromOffset(500, 120), BackgroundColor3 = C.Panel2, Visible = false, Parent = gui })
+	trainFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(540, 124), BackgroundColor3 = C.Panel2, Visible = false, Parent = gui })
 	scaleable(trainFrame)
 	trainLabel = text({ Text = "💪 TRAINING", Size = UDim2.new(1, -12, 0, 32), Position = UDim2.fromOffset(6, 4), MaxText = 28, Parent = trainFrame })
 	text({ Text = "Click / tap anywhere to pull faster!", Size = UDim2.new(1, -12, 0, 22), Position = UDim2.fromOffset(6, 36), TextColor3 = C.Gray, MaxText = 18, Parent = trainFrame })
@@ -852,6 +901,10 @@ end
 
 function UI.SetTraining(on: boolean)
 	trainFrame.Visible = on
+	-- панель тренировки встаёт на место панели силы, чтобы ничего не накладывалось
+	if powerFrameRef then
+		powerFrameRef.Visible = not on
+	end
 	UI.Refresh()
 end
 
@@ -933,6 +986,32 @@ function UI.RefreshHud()
 		trainUpsell.Visible = false
 	end
 end
+
+local function canAffordUpgrade(): boolean
+	local data = ClientState.Data
+	if not data then
+		return false
+	end
+	local cash = ClientState.Cash()
+	local nextGear = GameData.Gear[(data.Gear or 1) + 1]
+	if nextGear and cash >= nextGear.Price then
+		return true
+	end
+	return (data.TankLevel or 0) < Config.MaxTankUpgrades and cash >= Config.TankUpgradeCost(data.TankLevel or 0)
+end
+
+task.spawn(function()
+	-- кнопка UPGRADE подпрыгивает, когда хватает денег
+	while true do
+		task.wait(1.6)
+		if upgradeButton and canAffordUpgrade() then
+			local us = upgradeButton:FindFirstChildOfClass("UIScale")
+			if us then
+				TweenService:Create(us, TweenInfo.new(0.15, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 1, true), { Scale = 1.18 }):Play()
+			end
+		end
+	end
+end)
 
 function UI.Refresh()
 	UI.RefreshHud()
@@ -1063,7 +1142,7 @@ local function updateScale()
 		return
 	end
 	local vp = cam.ViewportSize
-	local s = math.clamp(math.min(vp.Y / 780, vp.X / 1200), 0.55, 1.15)
+	local s = math.clamp(math.min(vp.Y / 680, vp.X / 1080), 0.6, 1.4)
 	for _, us in ipairs(scaled) do
 		us.Scale = s
 	end

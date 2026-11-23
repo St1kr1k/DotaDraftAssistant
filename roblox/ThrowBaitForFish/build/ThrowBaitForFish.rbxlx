@@ -65,10 +65,13 @@ Config.PowerPerRep = 1
 
 -- ===== Аквариум =====
 Config.BaseTankSlots = 8
-Config.SlotsPerUpgrade = 2
-Config.MaxTankUpgrades = 16
+-- Редкие большие улучшения аквариума: каждое +6 мест и полностью новый вид
+Config.SlotsPerUpgrade = 6
+Config.MaxTankUpgrades = 4
+Config.TankUpgradeCosts = { 2500, 75000, 2500000, 90000000 }
+Config.TankUpgradeNames = { "Wooden Tank", "Reef Tank", "Golden Tank", "Neon Tank", "Royal Tank" }
 function Config.TankUpgradeCost(level: number): number
-	return math.floor(150 * 2.25 ^ level)
+	return Config.TankUpgradeCosts[level + 1] or math.huge
 end
 Config.SellSeconds = 25 -- рыба продаётся за 25 секунд своего дохода
 
@@ -1808,20 +1811,11 @@ function PlayerService.UpdateBase(player: Player)
 		l.Text = string.upper(player.DisplayName) .. "'S BASE"
 		l.TextColor3 = plot.Color
 	end
-	local tier = math.min(4, math.floor((profile.TankLevel or 0) / 4))
+	local tier = math.min(4, profile.TankLevel or 0)
 	if tier ~= plot.TankTier then
 		World.RebuildTank(plot, tier)
 	end
 	World.SetBarTier(plot.BarModel, profile.Gear or 1)
-	if (profile.TankLevel or 0) >= Config.MaxTankUpgrades then
-		plot.TankPrompt.ActionText = "Aquarium MAX"
-	else
-		plot.TankPrompt.ActionText = "Upgrade +" .. Config.SlotsPerUpgrade .. " slots (" .. Format.Money(Config.TankUpgradeCost(profile.TankLevel or 0)) .. ")"
-	end
-	local nextGear = GameData.Gear[(profile.Gear or 1) + 1]
-	if plot.BarPrompt then
-		plot.BarPrompt.ActionText = nextGear and ("Upgrade to " .. nextGear.Id .. " (" .. Format.Money(nextGear.Price) .. ")") or "Bar MAX"
-	end
 	PlayerService.UpdateSign(player)
 end
 
@@ -1834,10 +1828,6 @@ function PlayerService.ResetBase(plot)
 		World.RebuildTank(plot, 0)
 	end
 	World.SetBarTier(plot.BarModel, 1)
-	plot.TankPrompt.ActionText = "Upgrade Aquarium"
-	if plot.BarPrompt then
-		plot.BarPrompt.ActionText = "Upgrade Bar"
-	end
 end
 
 -- ===== Удочка в руке =====
@@ -1979,6 +1969,8 @@ function PlayerService.OnJoin(player: Player, applyPasses: (Player) -> ())
 	if not profile then
 		return
 	end
+	-- старые уровни аквариума (было 16 мелких) -> новые 4 больших
+	profile.TankLevel = math.clamp(profile.TankLevel or 0, 0, Config.MaxTankUpgrades)
 	-- старые записи без Uid
 	for _, f in ipairs(profile.Fish) do
 		if not f.U then
@@ -2166,34 +2158,6 @@ function Shop.Init()
 		return Shop.BuyGear(player)
 	end
 
-	-- кнопки улучшения прямо на базе
-	local function bindPlot(plot)
-		if plot.TankPrompt and not plot.TankPrompt:GetAttribute("Bound") then
-			plot.TankPrompt:SetAttribute("Bound", true)
-			plot.TankPrompt.Triggered:Connect(function(player)
-				if plot.Owner ~= player then
-					PlayerService.Notify(player, "This is not your base!", Color3.fromRGB(255, 120, 90))
-					return
-				end
-				local res = Shop.UpgradeTank(player)
-				PlayerService.Notify(player, res.ok and "🐠 Aquarium upgraded!" or res.msg, res.ok and Color3.fromRGB(120, 255, 120) or Color3.fromRGB(255, 120, 90))
-			end)
-		end
-	end
-	for _, plot in ipairs(World.Plots) do
-		bindPlot(plot)
-		if plot.BarPrompt then
-			plot.BarPrompt.Triggered:Connect(function(player)
-				if plot.Owner ~= player then
-					PlayerService.Notify(player, "This is not your base!", Color3.fromRGB(255, 120, 90))
-					return
-				end
-				local res = Shop.BuyGear(player)
-				PlayerService.Notify(player, res.ok and ("🏋️ Got " .. tostring(res.name) .. "!") or res.msg, res.ok and Color3.fromRGB(120, 255, 120) or Color3.fromRGB(255, 120, 90))
-			end)
-		end
-	end
-	World.OnTankPrompt = bindPlot
 	Shop.InitSelling()
 end
 
@@ -2437,26 +2401,60 @@ local occupied = {} :: { [BasePart]: Player }
 
 -- Суставы R15 для позы на турнике: имя части -> имя сустава
 local JOINTS = {
-	{ Part = "RightUpperArm", Joint = "RightShoulder", Kind = "Shoulder", Side = 1 },
-	{ Part = "LeftUpperArm", Joint = "LeftShoulder", Kind = "Shoulder", Side = -1 },
-	{ Part = "RightLowerArm", Joint = "RightElbow", Kind = "Elbow", Side = 1 },
-	{ Part = "LeftLowerArm", Joint = "LeftElbow", Kind = "Elbow", Side = -1 },
 	{ Part = "RightUpperLeg", Joint = "RightHip", Kind = "Hip", Side = 1 },
 	{ Part = "LeftUpperLeg", Joint = "LeftHip", Kind = "Hip", Side = -1 },
 	{ Part = "RightLowerLeg", Joint = "RightKnee", Kind = "Knee", Side = 1 },
 	{ Part = "LeftLowerLeg", Joint = "LeftKnee", Kind = "Knee", Side = -1 },
 }
 
+-- Руки держатся за перекладину через IK: кисти прибиты к точкам на перекладине,
+-- локти сгибаются сами, когда тело поднимается. Работает на любом R15-аватаре.
+local function setupIK(character: Model, bar: BasePart)
+	local created = {}
+	local hum = character:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return created
+	end
+	for _, side in ipairs({ "Right", "Left" }) do
+		local upper = character:FindFirstChild(side .. "UpperArm")
+		local hand = character:FindFirstChild(side .. "Hand")
+		if upper and hand then
+			local x = side == "Right" and 1.35 or -1.35
+			local target = Instance.new("Attachment")
+			target.Name = "IKTarget_" .. side
+			-- ось цилиндра-перекладины = локальная X; игрок смотрит в -Z
+			target.Position = Vector3.new(x, -0.25, 0)
+			target.Parent = bar
+			local pole = Instance.new("Attachment")
+			pole.Name = "IKPole_" .. side
+			-- локти уходят в стороны и назад
+			pole.Position = Vector3.new(x * 2.6, -3.5, 2.5)
+			pole.Parent = bar
+			local ik = Instance.new("IKControl")
+			ik.Name = "PullUpIK_" .. side
+			ik.Type = Enum.IKControlType.Position
+			ik.ChainRoot = upper
+			ik.EndEffector = hand
+			ik.Target = target
+			ik.Pole = pole
+			ik.Weight = 1
+			ik.SmoothTime = 0.05
+			ik.Parent = hum
+			table.insert(created, ik)
+			table.insert(created, target)
+			table.insert(created, pole)
+		end
+	end
+	return created
+end
+
 -- Поза: top = false — вис на прямых руках, true — подбородок над перекладиной
 local function poseOffset(kind: string, side: number, top: boolean): CFrame
-	if kind == "Shoulder" then
-		return top and CFrame.Angles(math.rad(140), 0, side * 0.6) or CFrame.Angles(math.rad(176), 0, side * 0.28)
-	elseif kind == "Elbow" then
-		return top and CFrame.Angles(math.rad(95), 0, 0) or CFrame.Angles(math.rad(8), 0, 0)
-	elseif kind == "Hip" then
-		return top and CFrame.Angles(math.rad(35), 0, 0) or CFrame.Angles(math.rad(14), 0, 0)
+	local _ = side
+	if kind == "Hip" then
+		return top and CFrame.Angles(math.rad(40), 0, 0) or CFrame.Angles(math.rad(12), 0, 0)
 	elseif kind == "Knee" then
-		return top and CFrame.Angles(math.rad(-80), 0, 0) or CFrame.Angles(math.rad(-55), 0, 0)
+		return top and CFrame.Angles(math.rad(-85), 0, 0) or CFrame.Angles(math.rad(-40), 0, 0)
 	end
 	return CFrame.identity
 end
@@ -2510,6 +2508,9 @@ local function stop(player: Player)
 		end
 		PlayerService.SetRodVisible(character, true)
 	end
+	for _, inst in ipairs(state.IK or {}) do
+		inst:Destroy()
+	end
 end
 
 local function doRep(player: Player, fromClick: boolean)
@@ -2531,7 +2532,7 @@ local function doRep(player: Player, fromClick: boolean)
 		local upTime = fromClick and 0.17 or 0.32
 		local downTime = fromClick and 0.22 or 0.45
 		applyPose(state.SavedC0, true, upTime)
-		local up = TweenService:Create(root, TweenInfo.new(upTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = state.HangCf * CFrame.new(0, 1.5, 0) })
+		local up = TweenService:Create(root, TweenInfo.new(upTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = state.HangCf * CFrame.new(0, 1.9, 0) })
 		up:Play()
 		up.Completed:Connect(function()
 			if not session.Training then
@@ -2566,15 +2567,21 @@ local function start(player: Player, bar: BasePart)
 	if not root or not humanoid or humanoid.Health <= 0 then
 		return
 	end
-	local hangCf = bar.CFrame * CFrame.new(0, -3.3, 0) -- ориентация турника: смотрим наружу
+	local hangCf = bar.CFrame * CFrame.new(0, -3.6, 0) -- ориентация турника: смотрим наружу
 	hangCf = CFrame.lookAt(hangCf.Position, hangCf.Position + bar.CFrame.LookVector)
+	local plot = World.PlotOf(player)
+	if not plot or plot.Bars[1] ~= bar then
+		PlayerService.Notify(player, "💪 Train on the bar at YOUR base!", Color3.fromRGB(255, 200, 90))
+		return
+	end
 	local saved = collectJoints(character)
 	applyPose(saved, false, 0.2)
+	local ik = setupIK(character, bar)
 	root.Anchored = true
 	root.CFrame = hangCf
 	PlayerService.SetRodVisible(character, false)
 	occupied[bar] = player
-	session.Training = { Bar = bar, HangCf = hangCf, SavedC0 = saved, NextAfk = os.clock() + Config.AfkRepInterval }
+	session.Training = { Bar = bar, HangCf = hangCf, SavedC0 = saved, IK = ik, NextAfk = os.clock() + Config.AfkRepInterval }
 	player:SetAttribute("Training", true)
 end
 
@@ -2782,9 +2789,9 @@ local function setupLighting()
 	atm.Parent = Lighting
 
 	local bloom = Instance.new("BloomEffect")
-	bloom.Intensity = 0.8
-	bloom.Size = 30
-	bloom.Threshold = 1.4
+	bloom.Intensity = 0.4
+	bloom.Size = 24
+	bloom.Threshold = 2
 	bloom.Parent = Lighting
 
 	local cc = Instance.new("ColorCorrectionEffect")
@@ -2891,31 +2898,148 @@ local function palm(parent: Instance, pos: Vector3, height: number)
 	end
 end
 
-local function bush(parent: Instance, pos: Vector3)
-	local colors = { rgb(70, 150, 70), rgb(90, 170, 80), rgb(60, 130, 65) }
-	for i = 1, 3 do
-		local s = rng:NextNumber(2.5, 4.5)
-		P({ Shape = Enum.PartType.Ball, Size = Vector3.new(s, s, s), Position = pos + Vector3.new(rng:NextNumber(-1.5, 1.5), s * 0.3, rng:NextNumber(-1.5, 1.5)), Color = colors[i], Material = Enum.Material.Grass, Parent = parent })
+local GREENS = { rgb(70, 160, 70), rgb(90, 180, 75), rgb(55, 140, 60), rgb(110, 190, 80) }
+
+-- Куст: плотная шапка из перекрывающихся шаров разных оттенков
+local function bush(parent: Instance, pos: Vector3, size: number?)
+	local s0 = size or rng:NextNumber(3, 4.5)
+	local m = model("Bush", parent)
+	for i = 1, 7 do
+		local a = i / 7 * math.pi * 2
+		local r = (i == 7) and 0 or s0 * 0.35
+		local s = s0 * rng:NextNumber(0.55, 0.8)
+		P({ Shape = Enum.PartType.Ball, Size = Vector3.new(s, s, s), Position = pos + Vector3.new(math.cos(a) * r, s * 0.38 + (i == 7 and s0 * 0.25 or 0), math.sin(a) * r), Color = GREENS[rng:NextInteger(1, #GREENS)], CanCollide = i == 7, Parent = m })
 	end
-	if rng:NextNumber() < 0.7 then
-		local flower = ({ rgb(255, 120, 160), rgb(255, 230, 90), rgb(255, 255, 255), rgb(190, 120, 255) })[rng:NextInteger(1, 4)]
-		for _ = 1, 4 do
-			P({ Shape = Enum.PartType.Ball, Size = Vector3.new(0.7, 0.7, 0.7), Position = pos + Vector3.new(rng:NextNumber(-2, 2), rng:NextNumber(2.2, 3.4), rng:NextNumber(-2, 2)), Color = flower, Material = Enum.Material.Neon, CanCollide = false, Parent = parent })
+end
+
+-- Пучок травы: несколько тонких наклонённых травинок
+local function grassTuft(parent: Instance, pos: Vector3)
+	local base = GREENS[rng:NextInteger(1, #GREENS)]
+	for _ = 1, rng:NextInteger(4, 7) do
+		local h = rng:NextNumber(1, 2.2)
+		local yaw = rng:NextNumber(0, math.pi * 2)
+		local tilt = rng:NextNumber(0.1, 0.45)
+		local cf = CFrame.new(pos) * CFrame.Angles(0, yaw, 0) * CFrame.Angles(tilt, 0, 0) * CFrame.new(0, h / 2, 0)
+		P({ Class = "WedgePart", Size = Vector3.new(0.12, h, 0.45), CFrame = cf, Color = base:Lerp(rgb(170, 220, 90), rng:NextNumber(0, 0.35)), CanCollide = false, CanQuery = false, CastShadow = false, Parent = parent })
+	end
+end
+
+-- Цветок: стебель, 5 лепестков, серединка
+local function flower(parent: Instance, pos: Vector3, color: Color3)
+	local h = rng:NextNumber(1.2, 2)
+	P({ Size = Vector3.new(0.12, h, 0.12), Position = pos + Vector3.new(0, h / 2, 0), Color = rgb(60, 140, 55), CanCollide = false, CastShadow = false, Parent = parent })
+	local top = pos + Vector3.new(0, h, 0)
+	local yaw = rng:NextNumber(0, math.pi * 2)
+	for i = 0, 4 do
+		local a = yaw + i / 5 * math.pi * 2
+		local cf = CFrame.new(top) * CFrame.Angles(0, a, 0) * CFrame.new(0, 0, -0.32) * CFrame.Angles(-0.3, 0, 0)
+		local petal = P({ Size = Vector3.new(0.42, 0.1, 0.55), CFrame = cf, Color = color, CanCollide = false, CastShadow = false, Parent = parent })
+		local mesh = Instance.new("SpecialMesh")
+		mesh.MeshType = Enum.MeshType.Sphere
+		mesh.Parent = petal
+	end
+	P({ Shape = Enum.PartType.Ball, Size = Vector3.new(0.32, 0.32, 0.32), Position = top + Vector3.new(0, 0.06, 0), Color = rgb(255, 210, 60), CanCollide = false, CastShadow = false, Parent = parent })
+end
+
+local FLOWER_COLORS = { rgb(255, 110, 150), rgb(255, 225, 80), rgb(255, 255, 255), rgb(180, 120, 255), rgb(255, 140, 70) }
+
+local function flowerPatch(parent: Instance, center: Vector3, count: number)
+	local color = FLOWER_COLORS[rng:NextInteger(1, #FLOWER_COLORS)]
+	for _ = 1, count do
+		flower(parent, center + Vector3.new(rng:NextNumber(-3, 3), 0, rng:NextNumber(-3, 3)), color)
+	end
+end
+
+-- Камни: 2-4 гранёных блока под разными углами
+local function rocks(parent: Instance, pos: Vector3, scale: number?)
+	local k = scale or 1
+	for i = 1, rng:NextInteger(2, 4) do
+		local s = Vector3.new(rng:NextNumber(1.5, 3.5), rng:NextNumber(1.2, 2.6), rng:NextNumber(1.5, 3.2)) * k
+		local c = rgb(125, 125, 130):Lerp(rgb(165, 160, 150), rng:NextNumber())
+		P({ Size = s, CFrame = CFrame.new(pos + Vector3.new(rng:NextNumber(-1.5, 1.5) * k, s.Y * 0.3, rng:NextNumber(-1.5, 1.5) * k)) * CFrame.Angles(rng:NextNumber(-0.4, 0.4), rng:NextNumber(0, 6), rng:NextNumber(-0.4, 0.4)), Color = c, Material = Enum.Material.Slate, Parent = parent })
+		local _ = i
+	end
+end
+
+-- Морская звезда на песке
+local function starfish(parent: Instance, pos: Vector3)
+	local color = ({ rgb(255, 120, 70), rgb(255, 90, 120), rgb(255, 200, 80) })[rng:NextInteger(1, 3)]
+	local yaw = rng:NextNumber(0, math.pi * 2)
+	for i = 0, 4 do
+		local a = yaw + i / 5 * math.pi * 2
+		local arm = P({ Size = Vector3.new(0.45, 0.2, 1), CFrame = CFrame.new(pos + Vector3.new(0, 0.1, 0)) * CFrame.Angles(0, a, 0) * CFrame.new(0, 0, -0.45), Color = color, CanCollide = false, Parent = parent })
+		local mesh = Instance.new("SpecialMesh")
+		mesh.MeshType = Enum.MeshType.Sphere
+		mesh.Parent = arm
+	end
+end
+
+-- Пляжный зонт с двумя шезлонгами
+local function beachSet(parent: Instance, pos: Vector3, facing: Vector3)
+	local m = model("BeachSet", parent)
+	local colors = { rgb(255, 90, 90), rgb(255, 255, 255) }
+	P({ Size = Vector3.new(0.3, 8, 0.3), Position = pos + Vector3.new(0, 4, 0), Color = rgb(240, 240, 240), Parent = m })
+	for i = 0, 9 do
+		local a = i / 10 * math.pi * 2
+		P({ Class = "WedgePart", Size = Vector3.new(2.1, 1.3, 3.6), CFrame = CFrame.new(pos + Vector3.new(0, 8, 0)) * CFrame.Angles(0, a, 0) * CFrame.new(0, -0.45, -1.8), Color = colors[i % 2 + 1], CanCollide = false, Parent = m })
+	end
+	local cf = CFrame.lookAt(pos, pos + facing)
+	for _, x in ipairs({ -2.2, 2.2 }) do
+		P({ Size = Vector3.new(1.8, 0.3, 4.5), CFrame = cf * CFrame.new(x, 0.9, 1.5), Color = rgb(80, 170, 255), Parent = m })
+		P({ Size = Vector3.new(1.8, 0.3, 1.8), CFrame = cf * CFrame.new(x, 1.5, 3.9) * CFrame.Angles(-0.7, 0, 0), Color = rgb(80, 170, 255), Parent = m })
+		for _, z in ipairs({ -0.4, 3.4 }) do
+			P({ Size = Vector3.new(1.6, 0.8, 0.2), CFrame = cf * CFrame.new(x, 0.4, z), Color = rgb(240, 240, 240), Parent = m })
 		end
 	end
 end
 
+local function barrel(parent: Instance, pos: Vector3)
+	P({ Shape = Enum.PartType.Cylinder, Size = Vector3.new(2.6, 2, 2), CFrame = CFrame.new(pos + Vector3.new(0, 1.3, 0)) * CFrame.Angles(0, 0, math.pi / 2), Color = rgb(150, 100, 60), Material = Enum.Material.Wood, Parent = parent })
+	for _, y in ipairs({ 0.4, 2.2 }) do
+		P({ Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.25, 2.1, 2.1), CFrame = CFrame.new(pos + Vector3.new(0, y, 0)) * CFrame.Angles(0, 0, math.pi / 2), Color = rgb(80, 80, 90), Material = Enum.Material.Metal, Parent = parent })
+	end
+end
+
+local function crate(parent: Instance, pos: Vector3, size: number?)
+	local s = size or 2.4
+	local cf = CFrame.new(pos + Vector3.new(0, s / 2, 0)) * CFrame.Angles(0, rng:NextNumber(0, 1.5), 0)
+	P({ Size = Vector3.new(s, s, s), CFrame = cf, Color = rgb(190, 140, 85), Material = Enum.Material.WoodPlanks, Parent = parent })
+	for _, e in ipairs({ { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } }) do
+		P({ Size = Vector3.new(0.3, s + 0.05, 0.3), CFrame = cf * CFrame.new(e[1] * (s / 2 - 0.1), 0, e[2] * (s / 2 - 0.1)), Color = rgb(120, 82, 52), Material = Enum.Material.Wood, Parent = parent })
+	end
+end
+
+local function rowboat(parent: Instance, cf: CFrame)
+	local m = model("Rowboat", parent)
+	local hull = rgb(235, 235, 240)
+	local trim = rgb(60, 130, 220)
+	P({ Size = Vector3.new(4, 0.5, 9), CFrame = cf * CFrame.new(0, 0, 0), Color = hull, Parent = m })
+	for _, x in ipairs({ -2, 2 }) do
+		P({ Size = Vector3.new(0.4, 1.6, 9), CFrame = cf * CFrame.new(x, 0.8, 0), Color = trim, Parent = m })
+	end
+	P({ Class = "WedgePart", Size = Vector3.new(4.4, 1.6, 2.6), CFrame = cf * CFrame.new(0, 0.8, -5.7), Color = hull, Parent = m })
+	P({ Size = Vector3.new(4.4, 1.6, 0.4), CFrame = cf * CFrame.new(0, 0.8, 4.6), Color = trim, Parent = m })
+	P({ Size = Vector3.new(3.6, 0.3, 1.2), CFrame = cf * CFrame.new(0, 1, 0.5), Color = WOOD, Material = Enum.Material.Wood, Parent = m })
+	for _, x in ipairs({ -1, 1 }) do
+		P({ Size = Vector3.new(0.25, 0.25, 5), CFrame = cf * CFrame.new(x * 2.6, 1.2, 0.5) * CFrame.Angles(0.3, x * 0.5, 0), Color = WOOD_DARK, Material = Enum.Material.Wood, Parent = m })
+	end
+end
+
+-- Фонарь: тёмный столб с кронштейном и застеклённым плафоном (мягкий свет, без «каши»)
 local function lantern(parent: Instance, pos: Vector3, height: number?)
-	local h = height or 5
-	P({ Size = Vector3.new(0.5, h, 0.5), Position = pos + Vector3.new(0, h / 2, 0), Color = rgb(70, 50, 35), Material = Enum.Material.Wood, Parent = parent })
-	local lamp = P({ Size = Vector3.new(1.1, 1.3, 1.1), Position = pos + Vector3.new(0, h + 0.4, 0), Color = rgb(255, 195, 110), Material = Enum.Material.Neon, CanCollide = false, Parent = parent })
-	P({ Size = Vector3.new(1.5, 0.3, 1.5), Position = pos + Vector3.new(0, h + 1.2, 0), Color = rgb(60, 45, 30), Material = Enum.Material.Wood, Parent = parent })
+	local h = height or 6
+	local dark = rgb(45, 40, 40)
+	P({ Size = Vector3.new(0.45, h, 0.45), Position = pos + Vector3.new(0, h / 2, 0), Color = dark, Material = Enum.Material.Metal, Parent = parent })
+	P({ Size = Vector3.new(1, 0.5, 1), Position = pos + Vector3.new(0, 0.25, 0), Color = dark, Material = Enum.Material.Metal, Parent = parent })
+	P({ Size = Vector3.new(1.3, 0.25, 1.3), Position = pos + Vector3.new(0, h + 1.5, 0), Color = dark, Material = Enum.Material.Metal, Parent = parent })
+	P({ Size = Vector3.new(1.05, 1.3, 1.05), Position = pos + Vector3.new(0, h + 0.75, 0), Color = rgb(255, 230, 180), Material = Enum.Material.Glass, Transparency = 0.45, CanCollide = false, Parent = parent })
+	local bulb = P({ Shape = Enum.PartType.Ball, Size = Vector3.new(0.45, 0.45, 0.45), Position = pos + Vector3.new(0, h + 0.75, 0), Color = rgb(255, 200, 120), Material = Enum.Material.Neon, CanCollide = false, Parent = parent })
 	local light = Instance.new("PointLight")
-	light.Color = rgb(255, 180, 100)
-	light.Range = 16
-	light.Brightness = 1.8
+	light.Color = rgb(255, 185, 110)
+	light.Range = 14
+	light.Brightness = 1.1
 	light.Shadows = false
-	light.Parent = lamp
+	light.Parent = bulb
 end
 
 -- Деревянный забор по отрезку: столбики + две доски
@@ -2969,7 +3093,7 @@ function World.SetBarTier(barModel: Model, tier: number)
 	end
 end
 
-local function pullUpBar(parent: Instance, cf: CFrame, index: number, withUpgrade: boolean): Model
+local function pullUpBar(parent: Instance, cf: CFrame, index: number): Model
 	local m = model("PullUpBar", parent)
 	for _, side in ipairs({ -1, 1 }) do
 		local post = P({ Size = Vector3.new(0.8, 10.4, 0.8), CFrame = cf * CFrame.new(side * 3.4, 5.2, 0), Parent = m })
@@ -3004,18 +3128,6 @@ local function pullUpBar(parent: Instance, cf: CFrame, index: number, withUpgrad
 	prompt.MaxActivationDistance = 9
 	prompt.RequiresLineOfSight = false
 	prompt.Parent = att
-	if withUpgrade then
-		local up = Instance.new("ProximityPrompt")
-		up.Name = "BarUpgrade"
-		up.ActionText = "Upgrade Bar"
-		up.ObjectText = "Gym"
-		up.KeyboardKeyCode = Enum.KeyCode.F
-		up.HoldDuration = 0
-		up.MaxActivationDistance = 9
-		up.RequiresLineOfSight = false
-		up.UIOffset = Vector2.new(0, 70)
-		up.Parent = att
-	end
 	local bb = billboard(bar, UDim2.fromOffset(170, 44), Vector3.new(0, 2.4, 0), 70)
 	label(bb, "💪 TRAIN", UDim2.fromScale(1, 1), UDim2.fromScale(0, 0), rgb(255, 230, 90))
 	World.SetBarTier(m, 1)
@@ -3114,19 +3226,7 @@ local function buildTank(parent: Instance, cf: CFrame, tier: number, accent: Col
 	bubbles.SpreadAngle = Vector2.new(10, 10)
 	bubbles.LightEmission = 0.5
 	bubbles.Parent = water
-	-- кнопка улучшения у передней стенки
-	local att = Instance.new("Attachment")
-	att.Position = Vector3.new(0, -(H - 1.6) / 2 + 1, -D / 2)
-	att.Parent = water
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = "TankUpgrade"
-	prompt.ActionText = "Upgrade Aquarium"
-	prompt.ObjectText = "Aquarium"
-	prompt.KeyboardKeyCode = Enum.KeyCode.F
-	prompt.HoldDuration = 0
-	prompt.MaxActivationDistance = 10
-	prompt.RequiresLineOfSight = false
-	prompt.Parent = att
+	local prompt = nil
 	local fish = folder("Fish", m)
 	m:SetAttribute("Tier", tier)
 	m.Parent = parent
@@ -3146,9 +3246,6 @@ function World.RebuildTank(plot, tier: number)
 	plot.Tank:Destroy()
 	plot.Tank, plot.Water, plot.FishFolder, plot.TankPrompt = tank, water, fish, prompt
 	plot.TankTier = tier
-	if World.OnTankPrompt then
-		World.OnTankPrompt(plot)
-	end
 end
 
 -- ===== База игрока =====
@@ -3201,7 +3298,7 @@ local function buildBase(root: Instance, index: number)
 	local incomeLabel = label(bb, "", UDim2.fromScale(1, 0.5), UDim2.fromScale(0, 0.5), rgb(120, 255, 120))
 	incomeLabel.Name = "Income"
 	-- турник
-	local barModel = pullUpBar(m, cf * CFrame.new(15, 0.6, -10), index * 10 + 1, true)
+	local barModel = pullUpBar(m, cf * CFrame.new(15, 0.6, -10), index * 10 + 1)
 	-- фонари у ворот
 	lantern(m, L(-10.5, -D / 2 - 1.5), 6)
 	lantern(m, L(10.5, -D / 2 - 1.5), 6)
@@ -3261,9 +3358,14 @@ local function buildPier(root: Instance)
 	-- дорожка от площади к пирсу
 	local pathLen = PIER_START - 34
 	P({ Size = Vector3.new(10, 0.6, pathLen), CFrame = at(34 + pathLen / 2, 0, GROUND_Y + 0.2), Color = rgb(200, 160, 110), Material = Enum.Material.WoodPlanks, Parent = m })
-	for r = 44, PIER_START - 6, 16 do
-		lantern(m, (at(r, -6.5, GROUND_Y)).Position, 5)
-		lantern(m, (at(r + 8, 6.5, GROUND_Y)).Position, 5)
+	for r = 48, PIER_START - 6, 28 do
+		lantern(m, (at(r, -6.5, GROUND_Y)).Position, 6)
+		lantern(m, (at(r, 6.5, GROUND_Y)).Position, 6)
+	end
+	for r = 40, PIER_START - 4, 9 do
+		for _, side in ipairs({ -1, 1 }) do
+			grassTuft(m, (at(r + rng:NextNumber(-2, 2), side * rng:NextNumber(5.5, 8), GROUND_Y)).Position)
+		end
 	end
 	-- арка «FISHING PIER»
 	for _, s in ipairs({ -10.5, 10.5 }) do
@@ -3284,10 +3386,19 @@ local function buildPier(root: Instance)
 	for _, s in ipairs({ -PIER_W / 2 + 0.4, PIER_W / 2 - 0.4 }) do
 		fence(m, (at(PIER_START, s, DECK_Y)).Position, (at(PIER_END, s, DECK_Y)).Position, 3.4)
 	end
-	for r = PIER_START + 12, PIER_END - 6, 24 do
-		lantern(m, (at(r, -PIER_W / 2 + 1.2, DECK_Y)).Position, 5)
-		lantern(m, (at(r + 12, PIER_W / 2 - 1.2, DECK_Y)).Position, 5)
+	for r = PIER_START + 20, PIER_END - 6, 36 do
+		lantern(m, (at(r, -PIER_W / 2 + 1.2, DECK_Y)).Position, 6)
+		lantern(m, (at(r, PIER_W / 2 - 1.2, DECK_Y)).Position, 6)
 	end
+	-- бочки, ящики и лодки у пирса
+	barrel(m, (at(PIER_START + 6, -PIER_W / 2 + 2, DECK_Y)).Position)
+	barrel(m, (at(PIER_START + 8.5, -PIER_W / 2 + 2.3, DECK_Y)).Position)
+	crate(m, (at(PIER_START + 7, PIER_W / 2 - 2.2, DECK_Y)).Position)
+	crate(m, (at(PIER_END - 4, PIER_W / 2 - 2.2, DECK_Y)).Position, 2)
+	barrel(m, (at(PIER_END + 3, -END_W / 2 + 3, DECK_Y)).Position)
+	crate(m, (at(PIER_END + 3, END_W / 2 - 3, DECK_Y)).Position)
+	rowboat(m, at(PIER_START + 50, PIER_W / 2 + 4, Config.WaterY + 0.2) * CFrame.Angles(0, 0.15, 0))
+	rowboat(m, at(PIER_START + 85, -PIER_W / 2 - 4, Config.WaterY + 0.2) * CFrame.Angles(0, -0.2, 0))
 	-- широкая площадка на конце
 	local endR = PIER_END + END_DEPTH / 2
 	P({ Size = Vector3.new(END_W, 1, END_DEPTH), CFrame = at(endR, 0, DECK_Y - 0.5), Color = WOOD, Material = Enum.Material.WoodPlanks, Parent = m })
@@ -3302,8 +3413,8 @@ local function buildPier(root: Instance)
 	fence(m, (at(PIER_END + END_DEPTH - 0.4, -END_W / 2, DECK_Y)).Position, (at(PIER_END + END_DEPTH - 0.4, END_W / 2, DECK_Y)).Position, 2.4)
 	fence(m, (at(PIER_END + 0.4, -END_W / 2, DECK_Y)).Position, (at(PIER_END + 0.4, -PIER_W / 2, DECK_Y)).Position, 3.4)
 	fence(m, (at(PIER_END + 0.4, PIER_W / 2, DECK_Y)).Position, (at(PIER_END + 0.4, END_W / 2, DECK_Y)).Position, 3.4)
-	for _, s in ipairs({ -END_W / 2 + 1.2, END_W / 2 - 1.2 }) do
-		lantern(m, (at(PIER_END + END_DEPTH - 1.5, s, DECK_Y)).Position, 6)
+	for _, side in ipairs({ -END_W / 2 + 1.2, END_W / 2 - 1.2 }) do
+		lantern(m, (at(PIER_END + END_DEPTH - 1.5, side, DECK_Y)).Position, 7)
 	end
 	-- места для заброса
 	local spots = {}
@@ -3314,10 +3425,9 @@ local function buildPier(root: Instance)
 			Shape = Enum.PartType.Cylinder,
 			Size = Vector3.new(0.1, 5.5, 5.5),
 			CFrame = CFrame.new(dir * castR + right * s + Vector3.new(0, DECK_Y + 0.05, 0)) * CFrame.Angles(0, 0, math.pi / 2),
-			Color = rgb(90, 230, 255),
-			Material = Enum.Material.Neon,
-			Transparency = 0.35,
+			Transparency = 1,
 			CanCollide = false,
+			CanQuery = false,
 			Parent = m,
 		})
 		spot.Name = "CastSpot"
@@ -3418,9 +3528,13 @@ local function buildCenter(root: Instance)
 	statue:PivotTo(CFrame.new(0, GROUND_Y + 19, 0) * CFrame.Angles(0.35, math.rad(30), 0))
 	statue.Name = "MegalodonStatue"
 	statue.Parent = m
-	for i = 0, 5 do
-		local a = i / 6 * math.pi * 2
-		lantern(m, Vector3.new(math.cos(a) * 14, GROUND_Y, math.sin(a) * 14), 5)
+	for i = 0, 3 do
+		local a = i / 4 * math.pi * 2 + math.pi / 4
+		lantern(m, Vector3.new(math.cos(a) * 30, GROUND_Y, math.sin(a) * 30), 7)
+	end
+	for i = 0, 7 do
+		local a = i / 8 * math.pi * 2
+		flowerPatch(m, Vector3.new(math.cos(a) * 15, GROUND_Y + 0.6, math.sin(a) * 15), 6)
 	end
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Size = Vector3.new(10, 1, 10)
@@ -3438,41 +3552,70 @@ local function buildCenter(root: Instance)
 	kiosk(m, CFrame.lookAt(Vector3.new(-16, GROUND_Y, -30), Vector3.new(0, GROUND_Y, 0)), "SHOP", rgb(255, 140, 60), "ShopPrompt")
 	kiosk(m, CFrame.lookAt(Vector3.new(-16, GROUND_Y, 30), Vector3.new(0, GROUND_Y, 0)), "SELL FISH", rgb(80, 220, 120), "SellPrompt")
 	kiosk(m, CFrame.lookAt(Vector3.new(-34, GROUND_Y, 0), Vector3.new(0, GROUND_Y, 0)), "ROBUX SHOP", rgb(255, 210, 60), "StorePrompt")
-	local gymBars = {}
-	for i = 0, 3 do
-		local a = math.rad(130 + i * 33)
-		local p = Vector3.new(math.cos(a) * 42, GROUND_Y, math.sin(a) * 42)
-		local bm = pullUpBar(m, CFrame.lookAt(p, Vector3.new(0, GROUND_Y, 0)), 900 + i, false)
-		World.SetBarTier(bm, 2)
-		table.insert(gymBars, bm:FindFirstChild("Bar"))
-	end
-	World.GymBars = gymBars
+	World.GymBars = {}
 end
 
 local function buildDecor(root: Instance)
 	local m = model("Decor", root)
+	local grass = model("Grass", root)
 	for i = 1, Config.PlotCount - 1 do
 		-- между базами (угол 0 — пирс, там пусто)
 		local a = i / Config.PlotCount * math.pi * 2
 		local dir = Vector3.new(math.cos(a), 0, math.sin(a))
-		for _, r in ipairs({ 80, 104, 124, 146 }) do
-			local jitter = Vector3.new(rng:NextNumber(-4, 4), 0, rng:NextNumber(-4, 4))
+		local side = Vector3.new(-dir.Z, 0, dir.X)
+		for _, r in ipairs({ 78, 106, 126, 148 }) do
+			local jitter = side * rng:NextNumber(-4, 4) + dir * rng:NextNumber(-3, 3)
 			local y = r > 128 and 2 or GROUND_Y
 			palm(m, dir * r + jitter + Vector3.new(0, y - 0.5, 0), rng:NextNumber(14, 22))
 		end
-		bush(m, dir * 92 + Vector3.new(rng:NextNumber(-3, 3), GROUND_Y, rng:NextNumber(-3, 3)))
-		bush(m, dir * 60 + Vector3.new(rng:NextNumber(-3, 3), GROUND_Y, rng:NextNumber(-3, 3)))
-		lantern(m, dir * 112 + Vector3.new(0, GROUND_Y, 0), 6)
+		bush(m, dir * 92 + side * rng:NextNumber(-3, 3) + Vector3.new(0, GROUND_Y, 0))
+		bush(m, dir * 64 + side * rng:NextNumber(-3, 3) + Vector3.new(0, GROUND_Y, 0), 3)
+		flowerPatch(m, dir * 115 + side * 3 + Vector3.new(0, GROUND_Y, 0), 7)
+		flowerPatch(m, dir * 70 - side * 4 + Vector3.new(0, GROUND_Y, 0), 5)
+		rocks(m, dir * 158 + side * rng:NextNumber(-6, 6) + Vector3.new(0, 1.5, 0), 1.2)
+		if i % 2 == 0 then
+			beachSet(m, dir * 150 + side * 9 + Vector3.new(0, 2, 0), dir)
+		end
+		for _ = 1, 3 do
+			starfish(m, dir * rng:NextNumber(138, 160) + side * rng:NextNumber(-14, 14) + Vector3.new(0, 2, 0))
+		end
+	end
+	-- трава по всему острову (не на базах, не на площади и не на дорожке)
+	local placed = 0
+	local tries = 0
+	while placed < 420 and tries < 4000 do
+		tries += 1
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = math.sqrt(rng:NextNumber(0.1, 1)) * 128
+		local p = Vector3.new(math.cos(a) * r, GROUND_Y, math.sin(a) * r)
+		local ok = r > 38 and not (p.X > 30 and math.abs(p.Z) < 9)
+		if ok then
+			for _, plot in ipairs(World.Plots) do
+				local rel = plot.CFrame:PointToObjectSpace(p)
+				if math.abs(rel.X) < 25 and math.abs(rel.Z) < 23 then
+					ok = false
+					break
+				end
+			end
+		end
+		if ok then
+			grassTuft(grass, p)
+			placed += 1
+		end
 	end
 	for _, s in ipairs({ -1, 1 }) do
 		palm(m, Vector3.new(150, 1.5, s * 26), 20)
 		palm(m, Vector3.new(135, 1.5, s * 34), 17)
+		rocks(m, Vector3.new(162, 0.5, s * 22), 1.4)
 	end
 	World.Lighthouse = lighthouse(m, Vector3.new(-158, 0, 0))
 end
 
 function World.Build()
 	setupLighting()
+	pcall(function()
+		(workspace.Terrain :: any).Decoration = true
+	end)
 	buildTerrain()
 	local root = folder("Map", workspace)
 	local plots = folder("Plots", workspace)
@@ -4031,6 +4174,138 @@ local function incomePopup()
 	TweenService:Create(anchor, TweenInfo.new(1.6, Enum.EasingStyle.Quad), { Position = anchor.Position + Vector3.new(0, 4, 0) }):Play()
 	TweenService:Create(t, TweenInfo.new(1.6), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
 	Debris:AddItem(anchor, 1.7)
+end
+
+-- ===== Сцена улучшения базы =====
+local function upgradeBanner(parent: BasePart, line1: string, line2: string, color: Color3)
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.fromOffset(520, 150)
+	bb.StudsOffset = Vector3.new(0, 6, 0)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.Parent = parent
+	local function line(text: string, y: number, h: number, col: Color3)
+		local t = Instance.new("TextLabel")
+		t.BackgroundTransparency = 1
+		t.Size = UDim2.new(1, 0, h, 0)
+		t.Position = UDim2.fromScale(0, y)
+		t.Font = Enum.Font.LuckiestGuy
+		t.TextScaled = true
+		t.Text = text
+		t.TextColor3 = col
+		t.TextStrokeTransparency = 0
+		t.Parent = bb
+		local sc = Instance.new("UIScale")
+		sc.Scale = 0.1
+		sc.Parent = t
+		TweenService:Create(sc, TweenInfo.new(0.45, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+	end
+	line(line1, 0, 0.55, color)
+	line(line2, 0.58, 0.42, Color3.fromRGB(255, 255, 255))
+	return bb
+end
+
+function Effects.UpgradeCutscene(kind: string, title: string, oldTank: Instance?)
+	local plot = ClientState.MyPlot()
+	local cam = workspace.CurrentCamera
+	if not plot or not cam then
+		return
+	end
+	-- дождаться новой модели аквариума с сервера
+	local target: Instance? = nil
+	local t0 = os.clock()
+	if kind == "Tank" then
+		repeat
+			local t = plot:FindFirstChild("Tank")
+			if t and t ~= oldTank then
+				target = t
+			end
+			task.wait(0.05)
+		until target or os.clock() - t0 > 2
+	else
+		target = plot:FindFirstChild("PullUpBar")
+	end
+	if not target then
+		return
+	end
+	local cf, size = (target :: Model):GetBoundingBox()
+	local center = cf.Position
+	local color = kind == "Tank" and Color3.fromRGB(90, 220, 255) or Color3.fromRGB(255, 190, 60)
+
+	-- спрятать детали, чтобы потом «собрать»
+	local parts = {}
+	for _, d in ipairs(target:GetDescendants()) do
+		if d:IsA("BasePart") and d.Anchored and not d:FindFirstAncestor("Fish") then
+			table.insert(parts, { part = d, cf = d.CFrame })
+			d.LocalTransparencyModifier = 1
+		end
+	end
+	table.sort(parts, function(a, b)
+		return a.cf.Position.Y < b.cf.Position.Y
+	end)
+
+	-- камера облетает базу
+	local savedType = cam.CameraType
+	cam.CameraType = Enum.CameraType.Scriptable
+	local radius = math.max(22, size.Magnitude * 1.1)
+	local baseYaw = math.atan2((cam.CFrame.Position - center).X, (cam.CFrame.Position - center).Z)
+	local duration = 3.4
+	local running = true
+	task.spawn(function()
+		local s0 = os.clock()
+		while running do
+			local k = math.min(1, (os.clock() - s0) / duration)
+			local yaw = baseYaw + k * 1.6
+			local pos = center + Vector3.new(math.sin(yaw) * radius, radius * 0.45, math.cos(yaw) * radius)
+			cam.CFrame = cam.CFrame:Lerp(CFrame.lookAt(pos, center + Vector3.new(0, 2, 0)), 0.12)
+			RunService.RenderStepped:Wait()
+		end
+	end)
+
+	task.wait(0.5)
+	-- столб света и вспышка
+	local pillar = anchoredPart({ Shape = Enum.PartType.Cylinder, Size = Vector3.new(200, 2, 2), CFrame = CFrame.new(center) * CFrame.Angles(0, 0, math.pi / 2), Color = color, Material = Enum.Material.Neon, Transparency = 0.2 })
+	TweenService:Create(pillar, TweenInfo.new(0.5, Enum.EasingStyle.Quad), { Size = Vector3.new(200, size.X * 0.9, size.X * 0.9), Transparency = 0.75 }):Play()
+	local flashCc = Instance.new("ColorCorrectionEffect")
+	flashCc.Brightness = 0.6
+	flashCc.TintColor = color
+	flashCc.Parent = Lighting
+	TweenService:Create(flashCc, TweenInfo.new(0.8), { Brightness = 0, TintColor = Color3.new(1, 1, 1) }):Play()
+	Debris:AddItem(flashCc, 1)
+
+	-- детали падают на место по очереди
+	local stagger = math.min(0.03, 1.2 / math.max(1, #parts))
+	for i, p in ipairs(parts) do
+		local part = p.part :: BasePart
+		if part.Parent then
+			part.CFrame = p.cf * CFrame.new(0, 10 + (i % 5), 0) * CFrame.Angles(0, (i % 2 == 0) and 0.6 or -0.6, 0)
+			TweenService:Create(part, TweenInfo.new(0.45, Enum.EasingStyle.Bounce), { CFrame = p.cf, LocalTransparencyModifier = 0 }):Play()
+		end
+		if i % 6 == 0 then
+			task.wait(stagger * 6)
+		end
+	end
+	task.wait(0.4)
+	Effects.Burst(center + Vector3.new(0, 4, 0), color, 120)
+	Effects.Burst(center + Vector3.new(0, 8, 0), Color3.fromRGB(255, 255, 255), 60)
+	local banner = upgradeBanner(pillar, kind == "Tank" and "AQUARIUM UPGRADED!" or "NEW PULL-UP BAR!", title, color)
+	TweenService:Create(pillar, TweenInfo.new(1.6), { Transparency = 1 }):Play()
+	task.wait(1.8)
+	banner:Destroy()
+	pillar:Destroy()
+	for _, p in ipairs(parts) do
+		if p.part.Parent then
+			p.part.CFrame = p.cf
+			p.part.LocalTransparencyModifier = 0
+		end
+	end
+	running = false
+	cam.CameraType = savedType == Enum.CameraType.Scriptable and Enum.CameraType.Custom or savedType
+	local character = player.Character
+	local hum = character and character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		cam.CameraSubject = hum
+	end
 end
 
 function Effects.Init()
@@ -4837,6 +5112,7 @@ UI.Init()
 Effects.Init()
 Fishing.Init()
 Training.Init()
+UI.Callbacks.UpgradeCutscene = Effects.UpgradeCutscene
 
 pcall(function()
 	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
@@ -5239,7 +5515,7 @@ local function openWindow(name: string, title: string, c1: Color3, c2: Color3)
 		Name = name,
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(640, 450),
+		Size = UDim2.fromOffset(860, 580),
 		BackgroundColor3 = C.Panel,
 		Parent = windowHolder,
 	})
@@ -5293,45 +5569,8 @@ renderers.Shop = function(body: Frame)
 		return
 	end
 	local cash = ClientState.Cash()
-	-- аквариум
-	local tank = panel({ Size = UDim2.new(1, 0, 0, 70), BackgroundColor3 = C.Panel2, Parent = body })
-	text({ Text = "🐠 Aquarium: " .. #data.Fish .. "/" .. data.Capacity .. " fish", Size = UDim2.new(0.6, 0, 0, 34), Position = UDim2.fromOffset(12, 6), TextXAlignment = Enum.TextXAlignment.Left, MaxText = 26, Parent = tank })
-	text({ Text = "Upgrade: +" .. Config.SlotsPerUpgrade .. " slots", Size = UDim2.new(0.6, 0, 0, 22), Position = UDim2.fromOffset(12, 40), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Gray, MaxText = 18, Parent = tank })
-	if data.TankLevel >= Config.MaxTankUpgrades then
-		button({ Text = "MAX", Size = UDim2.fromOffset(190, 52), Position = UDim2.new(1, -200, 0, 9), C1 = C.Gray, C2 = C.Gray2 }).Parent = tank
-	else
-		local cost = Config.TankUpgradeCost(data.TankLevel)
-		local can = cash >= cost
-		button({ Text = Format.Money(cost), Size = UDim2.fromOffset(190, 52), Position = UDim2.new(1, -200, 0, 9), C1 = can and C.Green or C.Gray, C2 = can and C.Green2 or C.Gray2 }, function()
-			local res = Remotes.Get("UpgradeTank"):InvokeServer()
-			if res and not res.ok then
-				UI.Toast(res.msg, C.Red)
-			else
-				UI.Toast("🐠 Aquarium upgraded!", C.Green)
-			end
-		end).Parent = tank
-	end
-	-- спортзал
-	local gearPanel = panel({ Size = UDim2.new(1, 0, 0, 70), Position = UDim2.fromOffset(0, 78), BackgroundColor3 = C.Panel2, Parent = body })
-	local curGear = GameData.Gear[data.Gear or 1]
-	local nextGear = GameData.Gear[(data.Gear or 1) + 1]
-	text({ Text = "🏋️ " .. curGear.Id .. "  (x" .. curGear.Mult .. " 💪)", Size = UDim2.new(0.6, 0, 0, 34), Position = UDim2.fromOffset(12, 6), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = curGear.Color, MaxText = 26, Parent = gearPanel })
-	text({ Text = nextGear and ("Next: " .. nextGear.Id .. " — x" .. nextGear.Mult .. " power per pull-up") or "Best gear owned!", Size = UDim2.new(0.6, 0, 0, 22), Position = UDim2.fromOffset(12, 40), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.Gray, MaxText = 18, Parent = gearPanel })
-	if nextGear then
-		local can = cash >= nextGear.Price
-		button({ Text = Format.Money(nextGear.Price), Size = UDim2.fromOffset(190, 52), Position = UDim2.new(1, -200, 0, 9), C1 = can and C.Green or C.Gray, C2 = can and C.Green2 or C.Gray2 }, function()
-			local res = Remotes.Get("BuyGear"):InvokeServer()
-			if res and not res.ok then
-				UI.Toast(res.msg, C.Red)
-			elseif res then
-				UI.Toast("🏋️ Got " .. tostring(res.name) .. "!", C.Green)
-			end
-		end).Parent = gearPanel
-	else
-		button({ Text = "MAX", Size = UDim2.fromOffset(190, 52), Position = UDim2.new(1, -200, 0, 9), C1 = C.Gray, C2 = C.Gray2 }).Parent = gearPanel
-	end
 	-- наживки
-	local list = scroller(body, UDim2.new(1, 0, 1, -158), UDim2.fromOffset(0, 158))
+	local list = scroller(body, UDim2.fromScale(1, 1))
 	new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
 	new("UIPadding", { PaddingRight = UDim.new(0, 12), PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2), Parent = list })
 	for i, bait in ipairs(GameData.Baits) do
@@ -5522,6 +5761,72 @@ renderers.Store = function(body: Frame)
 	local _ = data
 end
 
+-- Улучшения базы: редкие, дорогие, с эффектной сценой
+local function upgradeCard(parent: Instance, order: number, title: string, icon: string, color1: Color3, color2: Color3, current: string, nextText: string?, bonus: string, price: number?, onBuy: () -> ())
+	local card = panel({ BackgroundColor3 = C.Panel2, LayoutOrder = order, Parent = parent })
+	local head = new("Frame", { Size = UDim2.new(1, 0, 0, 54), BackgroundColor3 = C.White, BorderSizePixel = 0, Parent = card })
+	corner(16).Parent = head
+	grad(color1, color2).Parent = head
+	text({ Text = title, Size = UDim2.new(1, -20, 1, -10), Position = UDim2.fromOffset(10, 5), Font = Enum.Font.LuckiestGuy, MaxText = 34, StrokeThickness = 3.5, Parent = head })
+	text({ Text = icon, Size = UDim2.new(1, 0, 0, 110), Position = UDim2.fromOffset(0, 62), MaxText = 96, StrokeThickness = 0, Parent = card })
+	text({ Text = current, Size = UDim2.new(1, -20, 0, 34), Position = UDim2.fromOffset(10, 176), Font = Enum.Font.LuckiestGuy, MaxText = 30, StrokeThickness = 3, Parent = card })
+	text({ Text = nextText and ("NEXT: " .. nextText) or "MAX LEVEL!", Size = UDim2.new(1, -20, 0, 28), Position = UDim2.fromOffset(10, 214), Font = Enum.Font.LuckiestGuy, TextColor3 = C.Gold, MaxText = 24, StrokeThickness = 3, Parent = card })
+	text({ Text = bonus, Size = UDim2.new(1, -20, 0, 26), Position = UDim2.fromOffset(10, 246), TextColor3 = Color3.fromRGB(170, 255, 170), MaxText = 22, Parent = card })
+	if price then
+		local can = ClientState.Cash() >= price
+		button({ Text = "UPGRADE  " .. Format.Money(price), Size = UDim2.new(1, -24, 0, 66), Position = UDim2.new(0, 12, 1, -78), C1 = can and C.Green or C.Gray, C2 = can and C.Green2 or C.Gray2, MaxText = 32 }, onBuy).Parent = card
+	else
+		button({ Text = "MAXED", Size = UDim2.new(1, -24, 0, 66), Position = UDim2.new(0, 12, 1, -78), C1 = C.Gray, C2 = C.Gray2, MaxText = 32 }).Parent = card
+	end
+end
+
+renderers.Upgrade = function(body: Frame)
+	local data = ClientState.Data
+	if not data then
+		return
+	end
+	local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = body })
+	new("UIGridLayout", { CellSize = UDim2.new(0.5, -8, 1, 0), CellPadding = UDim2.fromOffset(16, 0), SortOrder = Enum.SortOrder.LayoutOrder, Parent = row })
+	local lvl = data.TankLevel or 0
+	local maxed = lvl >= Config.MaxTankUpgrades
+	upgradeCard(row, 1, "AQUARIUM", "🐠", C.Blue, C.Blue2,
+		Config.TankUpgradeNames[lvl + 1] .. "  •  " .. data.Capacity .. " slots",
+		(not maxed) and Config.TankUpgradeNames[lvl + 2] or nil,
+		maxed and "Your tank is legendary!" or ("+" .. Config.SlotsPerUpgrade .. " slots + brand new look"),
+		(not maxed) and Config.TankUpgradeCost(lvl) or nil,
+		function()
+			local myPlot = ClientState.MyPlot()
+			local oldTank = myPlot and myPlot:FindFirstChild("Tank")
+			local res = Remotes.Get("UpgradeTank"):InvokeServer()
+			if res and res.ok then
+				closeWindow()
+				if UI.Callbacks.UpgradeCutscene then
+					task.spawn(UI.Callbacks.UpgradeCutscene, "Tank", Config.TankUpgradeNames[lvl + 2], oldTank)
+				end
+			elseif res then
+				UI.Toast(res.msg, C.Red)
+			end
+		end)
+	local gear = GameData.Gear[data.Gear or 1]
+	local nextGear = GameData.Gear[(data.Gear or 1) + 1]
+	upgradeCard(row, 2, "PULL-UP BAR", "🏋️", C.Orange, C.Orange2,
+		gear.Id .. "  •  x" .. gear.Mult .. " power",
+		nextGear and nextGear.Id or nil,
+		nextGear and ("x" .. nextGear.Mult .. " power per pull-up!") or "Strongest bar in the ocean!",
+		nextGear and nextGear.Price or nil,
+		function()
+			local res = Remotes.Get("BuyGear"):InvokeServer()
+			if res and res.ok then
+				closeWindow()
+				if UI.Callbacks.UpgradeCutscene then
+					task.spawn(UI.Callbacks.UpgradeCutscene, "Bar", tostring(res.name))
+				end
+			elseif res then
+				UI.Toast(res.msg, C.Red)
+			end
+		end)
+end
+
 function UI.OpenWindow(name: string)
 	if name == "Shop" then
 		openWindow("Shop", "🛒 Shop", C.Orange, C.Orange2)
@@ -5529,6 +5834,8 @@ function UI.OpenWindow(name: string)
 		openWindow("Aquarium", "🐠 My Aquarium", C.Blue, C.Blue2)
 	elseif name == "Index" then
 		openWindow("Index", "📖 Fish Index", C.Purple, C.Purple2)
+	elseif name == "Upgrade" then
+		openWindow("Upgrade", "⬆️ Base Upgrades", C.Green, C.Green2)
 	elseif name == "Store" then
 		openWindow("Store", "💎 Store", C.Gold, C.Gold2)
 	end
@@ -5558,6 +5865,8 @@ local trainFrame: Frame
 local trainLabel: TextLabel
 local trainUpsell: TextButton
 local pierButton: TextButton
+local upgradeButton: TextButton
+local powerFrameRef: Frame
 local displayedCash = 0
 
 local function buildHud()
@@ -5575,7 +5884,7 @@ local function buildHud()
 	luckLabel = text({ Size = UDim2.new(1, -12, 1, -6), Position = UDim2.fromOffset(6, 3), MaxText = 20, Parent = luckBanner })
 
 	-- левое меню: яркие квадратные кнопки в 2 столбца
-	local menu = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 14, 0.5, 40), Size = UDim2.fromOffset(180, 280), BackgroundTransparency = 1, Parent = gui })
+	local menu = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 14, 0.5, 60), Size = UDim2.fromOffset(190, 390), BackgroundTransparency = 1, Parent = gui })
 	scaleable(menu)
 	new("UIGridLayout", { CellSize = UDim2.fromOffset(84, 84), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = menu })
 	local function goTo(remote: string)
@@ -5587,12 +5896,13 @@ local function buildHud()
 		end
 	end
 	local items = {
+		{ "⬆️", "UPGRADE", C.Green, C.Green2, function() UI.OpenWindow("Upgrade") end },
 		{ "🛒", "SHOP", C.Orange, C.Orange2, function() UI.OpenWindow("Shop") end },
 		{ "💎", "STORE", C.Gold, C.Gold2, function() UI.OpenWindow("Store") end },
 		{ "🐠", "TANK", C.Blue, C.Blue2, function() UI.OpenWindow("Aquarium") end },
 		{ "📖", "INDEX", C.Purple, C.Purple2, function() UI.OpenWindow("Index") end },
 		{ "🎣", "PIER", Color3.fromRGB(80, 230, 230), Color3.fromRGB(20, 150, 170), goTo("GoToPier") },
-		{ "🏠", "BASE", C.Green, C.Green2, goTo("GoToBase") },
+		{ "🏠", "BASE", Color3.fromRGB(120, 200, 255), Color3.fromRGB(60, 130, 230), goTo("GoToBase") },
 	}
 	for i, it in ipairs(items) do
 		local b = button({ Text = "", LayoutOrder = i, C1 = it[3], C2 = it[4], Corner = 16 }, it[5])
@@ -5602,6 +5912,9 @@ local function buildHud()
 		text({ Text = it[2], Size = UDim2.new(1, -8, 0.3, 0), Position = UDim2.new(0, 4, 0.64, 0), Font = Enum.Font.LuckiestGuy, MaxText = 22, StrokeThickness = 3, Parent = b })
 		if it[2] == "PIER" then
 			pierButton = b
+		end
+		if it[2] == "UPGRADE" then
+			upgradeButton = b
 		end
 		if it[2] == "STORE" then
 			task.spawn(function()
@@ -5617,7 +5930,8 @@ local function buildHud()
 	end
 
 	-- сила внизу
-	local powerFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(460, 70), BackgroundColor3 = C.Panel, Parent = gui })
+	local powerFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(500, 76), BackgroundColor3 = C.Panel, Parent = gui })
+	powerFrameRef = powerFrame
 	scaleable(powerFrame)
 	powerLabel = text({ Text = "💪 0 Power", Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 4), MaxText = 26, Font = Enum.Font.LuckiestGuy, StrokeThickness = 3, Parent = powerFrame })
 	local bar = new("Frame", { Size = UDim2.new(1, -24, 0, 26), Position = UDim2.fromOffset(12, 38), BackgroundColor3 = C.Panel2, Parent = powerFrame })
@@ -5664,6 +5978,17 @@ local function buildHud()
 		UI.Refresh()
 	end)
 	autoButton.Parent = gui
+	-- на ПК забрасывают мышью, большая кнопка CAST нужна только на телефоне
+	local UserInputService = game:GetService("UserInputService")
+	if not UserInputService.TouchEnabled or UserInputService.KeyboardEnabled then
+		castButton.Visible = false
+		autoButton.Position = UDim2.new(1, -18, 1, -18)
+		autoButton.Size = UDim2.fromOffset(170, 50)
+		luckyBadge.Parent = gui
+		luckyBadge.AnchorPoint = Vector2.new(1, 1)
+		luckyBadge.Position = UDim2.new(1, -24, 1, -76)
+		luckyBadge.Size = UDim2.fromOffset(160, 34)
+	end
 	scaleable(autoButton)
 
 	-- полоска заряда
@@ -5687,7 +6012,7 @@ local function buildHud()
 	grad(C.Green, C.Green2).Parent = reelFill
 
 	-- тренировка
-	trainFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -92), Size = UDim2.fromOffset(500, 120), BackgroundColor3 = C.Panel2, Visible = false, Parent = gui })
+	trainFrame = panel({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(540, 124), BackgroundColor3 = C.Panel2, Visible = false, Parent = gui })
 	scaleable(trainFrame)
 	trainLabel = text({ Text = "💪 TRAINING", Size = UDim2.new(1, -12, 0, 32), Position = UDim2.fromOffset(6, 4), MaxText = 28, Parent = trainFrame })
 	text({ Text = "Click / tap anywhere to pull faster!", Size = UDim2.new(1, -12, 0, 22), Position = UDim2.fromOffset(6, 36), TextColor3 = C.Gray, MaxText = 18, Parent = trainFrame })
@@ -5756,6 +6081,10 @@ end
 
 function UI.SetTraining(on: boolean)
 	trainFrame.Visible = on
+	-- панель тренировки встаёт на место панели силы, чтобы ничего не накладывалось
+	if powerFrameRef then
+		powerFrameRef.Visible = not on
+	end
 	UI.Refresh()
 end
 
@@ -5837,6 +6166,32 @@ function UI.RefreshHud()
 		trainUpsell.Visible = false
 	end
 end
+
+local function canAffordUpgrade(): boolean
+	local data = ClientState.Data
+	if not data then
+		return false
+	end
+	local cash = ClientState.Cash()
+	local nextGear = GameData.Gear[(data.Gear or 1) + 1]
+	if nextGear and cash >= nextGear.Price then
+		return true
+	end
+	return (data.TankLevel or 0) < Config.MaxTankUpgrades and cash >= Config.TankUpgradeCost(data.TankLevel or 0)
+end
+
+task.spawn(function()
+	-- кнопка UPGRADE подпрыгивает, когда хватает денег
+	while true do
+		task.wait(1.6)
+		if upgradeButton and canAffordUpgrade() then
+			local us = upgradeButton:FindFirstChildOfClass("UIScale")
+			if us then
+				TweenService:Create(us, TweenInfo.new(0.15, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, 1, true), { Scale = 1.18 }):Play()
+			end
+		end
+	end
+end)
 
 function UI.Refresh()
 	UI.RefreshHud()
@@ -5967,7 +6322,7 @@ local function updateScale()
 		return
 	end
 	local vp = cam.ViewportSize
-	local s = math.clamp(math.min(vp.Y / 780, vp.X / 1200), 0.55, 1.15)
+	local s = math.clamp(math.min(vp.Y / 680, vp.X / 1080), 0.6, 1.4)
 	for _, us in ipairs(scaled) do
 		us.Scale = s
 	end
