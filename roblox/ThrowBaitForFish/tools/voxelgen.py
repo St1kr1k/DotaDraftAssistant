@@ -44,10 +44,13 @@ def shade(color, i, j, k, amount=0.07, seed=0):
     return tuple(int(max(0, min(255, c * f))) for c in color)
 
 
+RES_K = 1.6  # во сколько раз мельче кубики относительно базовой сетки 30 на длину
+
+
 class Grid:
     def __init__(self, res=30):
-        self.res = res          # вокселов на единицу длины
-        self.s = 1.0 / res
+        self.res = int(round(res * RES_K))  # вокселов на единицу длины
+        self.s = 1.0 / self.res
         self.cells = {}
 
     def idx(self, x, y, z):
@@ -118,20 +121,59 @@ class Grid:
                 self.cells[(-i, j, k)] = v
 
     def to_meshes(self):
-        groups = {}
+        """Видимые грани, склеенные в прямоугольники одного цвета (жадное объединение по слоям)."""
         cells = self.cells
         s = self.s
-        for (i, j, k), (role, col) in cells.items():
-            for (dx, dy, dz), quad in FACES:
-                if (i + dx, j + dy, k + dz) in cells:
-                    continue
-                key = f"{role}_{col[0]:02x}{col[1]:02x}{col[2]:02x}"
-                g = groups.setdefault(key, ([], []))
-                base = len(g[0])
-                for (qx, qy, qz) in quad:
-                    g[0].append(((i - 0.5 + qx) * s, (j - 0.5 + qy) * s, (k - 0.5 + qz) * s))
-                g[1].append([base, base + 1, base + 2])
-                g[1].append([base, base + 2, base + 3])
+        groups = {}
+        for axis in range(3):
+            u_ax, v_ax = [a for a in range(3) if a != axis]
+            for sign in (1, -1):
+                # слой -> {(u, v): key}
+                layers = {}
+                for pos, (role, col) in cells.items():
+                    nb = list(pos)
+                    nb[axis] += sign
+                    if tuple(nb) in cells:
+                        continue
+                    key = f"{role}_{col[0]:02x}{col[1]:02x}{col[2]:02x}"
+                    layers.setdefault(pos[axis], {})[(pos[u_ax], pos[v_ax])] = key
+                for layer, mask in layers.items():
+                    used = set()
+                    for (u, v) in sorted(mask):
+                        if (u, v) in used:
+                            continue
+                        key = mask[(u, v)]
+                        w = 1
+                        while (u + w, v) in mask and mask[(u + w, v)] == key and (u + w, v) not in used:
+                            w += 1
+                        h = 1
+                        while all((u + du, v + h) in mask and mask[(u + du, v + h)] == key and (u + du, v + h) not in used for du in range(w)):
+                            h += 1
+                        for du in range(w):
+                            for dv in range(h):
+                                used.add((u + du, v + dv))
+                        plane = (layer + (0.5 if sign > 0 else -0.5)) * s
+                        corners = []
+                        for (cu, cv) in ((u - 0.5, v - 0.5), (u - 0.5 + w, v - 0.5), (u - 0.5 + w, v - 0.5 + h), (u - 0.5, v - 0.5 + h)):
+                            p = [0.0, 0.0, 0.0]
+                            p[axis] = plane
+                            p[u_ax] = cu * s
+                            p[v_ax] = cv * s
+                            corners.append(tuple(p))
+                        g = groups.setdefault(key, ([], []))
+                        base = len(g[0])
+                        g[0].extend(corners)
+                        # ориентация: нормаль должна смотреть по sign вдоль axis
+                        n = [0, 0, 0]
+                        n[axis] = sign
+                        e1 = np.subtract(corners[1], corners[0])
+                        e2 = np.subtract(corners[2], corners[0])
+                        if np.dot(np.cross(e1, e2), n) > 0:
+                            g[1].append([base, base + 1, base + 2])
+                            g[1].append([base, base + 2, base + 3])
+                        else:
+                            g[1].append([base, base + 2, base + 1])
+                            g[1].append([base, base + 3, base + 2])
         return groups
 
 
@@ -192,7 +234,7 @@ def eyes(g, body, t, up=0.35, size=2, cute=False, pupil_color=(15, 15, 20)):
     i_side = int(round((cx + w * math.sqrt(max(0.0, 1 - up * up))) * g.res))
     j0 = int(round(y * g.res))
     k0 = int(round(z * g.res))
-    sz = size + (1 if cute else 0)
+    sz = max(2, int(round((size + (1 if cute else 0)) * g.res / 30)))
     for side in (1, -1):
         for dj in range(sz):
             for dk in range(sz):
@@ -204,6 +246,27 @@ def eyes(g, body, t, up=0.35, size=2, cute=False, pupil_color=(15, 15, 20)):
             for dk in range(max(1, sz - 1)):
                 g.set(side * (i_side + 2) if False else side * (i_side + 1), pj + dj, pk + dk, "Pupil", pupil_color)
         g.set(side * (i_side + 1), pj + sz - 1, pk + sz - 1 if sz > 1 else pk, "Eye", (255, 255, 255))
+
+
+def eye_block(g, x, y, z, size, white=True, color=(15, 15, 20)):
+    """Квадратный глаз в мировых координатах: белок size (в долях длины), зрачок спереди-снизу, блик."""
+    n = max(2, int(round(size * g.res)))
+    i0 = int(round(x * g.res))
+    j0 = int(round(y * g.res)) - n // 2
+    k0 = int(round(z * g.res)) - n // 2
+    for side in (1, -1):
+        if white:
+            for dj in range(n):
+                for dk in range(n):
+                    g.set(side * i0, j0 + dj, k0 + dk, "Eye", (250, 250, 250))
+                    g.set(side * (i0 + 1), j0 + dj, k0 + dk, "Eye", (250, 250, 250))
+        pn = max(1, n - 1) if white else n
+        role = "Pupil" if color == (15, 15, 20) else "Glow"
+        for dj in range(pn):
+            for dk in range(pn):
+                g.set(side * (i0 + 1), j0 + dj, k0 + dk, role, color)
+        if white:
+            g.set(side * (i0 + 1), j0 + n - 1, k0 + n - 1, "Eye", (255, 255, 255))
 
 
 def markers_cells(g, nose_z, top_y):
@@ -281,9 +344,11 @@ def v_shark(d):
     cx, cyy, ww, hh = b.section(t)
     k = int(round(z * g.res))
     jm = int(round((cyy - hh * 0.35) * g.res))
-    for i in range(-2, 3):
+    mw = int(round(2 * g.res / 30))
+    for i in range(-mw, mw + 1):
         g.set(i, jm, k, "Dark", (120, 30, 40))
         g.set(i, jm, k + 1, "Dark", (120, 30, 40))
+        g.set(i, jm - 1, k + 1, "Dark", (120, 30, 40))
         if d.get("Teeth") and i % 2 == 0:
             g.set(i, jm + 1, k - 1, "Tooth", (250, 250, 245))
             g.set(i, jm - 1, k - 1, "Tooth", (250, 250, 245))
@@ -298,8 +363,7 @@ def v_shark(d):
     else:
         z = b.z0 + b.L * 0.1
         _, cy2, w2, h2 = b.section(0.1)
-        for side in (1, -1):
-            g.set(side * (int(round(w2 * 0.85 * g.res)) + 1), int(round((cy2 + h2 * 0.2) * g.res)), int(round(z * g.res)), "Glow" if d.get("Glow") else "Pupil", d["C3"] if d.get("Glow") else (15, 15, 20))
+        eye_block(g, w2 * 0.85, cy2 + h2 * 0.2, z, 0.035, white=False, color=d["C3"] if d.get("Glow") else (15, 15, 20))
     if d.get("Hammer"):
         g.box((-0.2, -0.01, -0.5), (0.2, 0.03, -0.44), solid("C1", d["C1"]))
         for side in (1, -1):
@@ -412,9 +476,8 @@ def v_ray(d):
     g.fill(((-0.8, 0.8), (-0.1, 0.1), (-0.4, 0.5)), inside, color)
     for side in (1, -1):
         g.line([(side * 0.08, 0.0, -0.3), (side * 0.1, -0.02, -0.42), (side * 0.07, -0.05, -0.45)], g.s * 0.7, solid("C1", c1))
-        g.set(side * int(round(0.13 * g.res)), 1, int(round(-0.27 * g.res)), "Eye", (250, 250, 250))
-        g.set(side * int(round(0.14 * g.res)), 1, int(round(-0.28 * g.res)), "Pupil", (15, 15, 20))
     g.line([(0, 0, 0.3), (0, 0.0, 0.6), (0.03, 0.01, 0.9)], g.s * 0.45, solid("C1", c1))
+    eye_block(g, 0.13, 0.04, -0.27, 0.045)
     if d.get("Glow"):
         for q in range(6):
             g.set(int(round(0.1 * math.cos(q) * g.res)), 2, int(round((-0.05 + q * 0.04) * g.res)), "Glow", d["C3"])
@@ -446,11 +509,7 @@ def v_jelly(d):
         a = q / 4 * math.tau + 0.4
         pts = [(math.cos(a) * 0.05 + 0.03 * math.sin(s), 0.03 - s * 0.06, math.sin(a) * 0.05) for s in range(8)]
         g.line(pts, g.s * 0.8, solid("C2", c2), overwrite=False)
-    for side in (1, -1):
-        for dj in range(2):
-            for dk in range(2):
-                g.set(side * 3 + (0 if side > 0 else 0), 5 + dj, -9 + dk, "Eye", (250, 250, 250))
-        g.set(side * 3, 5, -10, "Pupil", (15, 15, 20))
+    eye_block(g, 0.1, 0.17, -0.29, 0.075)
     return g
 
 
@@ -463,12 +522,7 @@ def v_squid(d):
         g.poly_slab([(0.32, 0.0), (0.46, 0.0), (0.5, 0.0)], 0.0, solid("C3", d["C3"]))
         g.line([(side * 0.05, 0, 0.36), (side * 0.15, 0, 0.44), (side * 0.06, 0, 0.5)], g.s * 0.6, solid("C3", d["C3"]))
     g.ellipsoid((0, 0, -0.14), (0.085 * big, 0.08 * big, 0.08), solid("C2", d["C2"]))
-    for side in (1, -1):
-        for dj in range(3):
-            for dk in range(3):
-                g.set(side * int(round(0.085 * big * g.res + 1)), dj - 1, int(round(-0.16 * g.res)) + dk - 1, "Eye", (250, 250, 250))
-        g.set(side * int(round(0.085 * big * g.res + 1)), -1, int(round(-0.16 * g.res)) - 1, "Pupil", (15, 15, 20))
-        g.set(side * int(round(0.085 * big * g.res + 1)), 0, int(round(-0.16 * g.res)) - 1, "Pupil", (15, 15, 20))
+    eye_block(g, 0.085 * big, 0.0, -0.16, 0.09)
     for q in range(8):
         a = q / 8 * math.tau
         dx, dy = math.cos(a), math.sin(a)
@@ -497,13 +551,7 @@ def v_octopus(d):
             curl = max(0, t - 0.6) * 2.5
             pts.append((dx * r - dz * curl * 0.06, 0.02 - t * 0.12 + curl * curl * 0.12, dz * r + dx * curl * 0.06))
         g.line(pts, g.s * 1.0, solid("C1", c1))
-    for side in (1, -1):
-        for dj in range(3):
-            for dk in range(3):
-                g.set(side * 5, 3 + dj, -6 + dk - 1, "Eye", (250, 250, 250))
-                g.set(side * 4, 3 + dj, -6 + dk - 1, "Eye", (250, 250, 250))
-        g.set(side * 5, 3, -7, "Pupil", (15, 15, 20))
-        g.set(side * 5, 4, -7, "Pupil", (15, 15, 20))
+    eye_block(g, 0.14, 0.13, -0.21, 0.1)
     return g
 
 
@@ -517,9 +565,8 @@ def v_turtle(d):
     g.fill(((-0.3, 0.3), (0.02, 0.26), (-0.36, 0.36)), lambda x, y, z: (x / 0.3) ** 2 + ((y - 0.02) / 0.22) ** 2 + (z / 0.36) ** 2 <= 1 and y >= 0.02, shell)
     g.box((-0.27, -0.03, -0.32), (0.27, 0.02, 0.32), solid("C2", c2))
     g.ellipsoid((0, 0.04, -0.44), (0.09, 0.08, 0.1), solid("C3", c3))
+    eye_block(g, 0.075, 0.07, -0.49, 0.045)
     for side in (1, -1):
-        g.set(side * 3, 2, -15, "Eye", (250, 250, 250))
-        g.set(side * 3, 2, -16, "Pupil", (15, 15, 20))
         g.line([(side * 0.25, 0, -0.18), (side * 0.42, -0.03, -0.1), (side * 0.5, -0.04, 0.0)], g.s * 0.9, solid("C3", c3))
         g.line([(side * 0.22, 0, 0.25), (side * 0.32, -0.03, 0.33)], g.s * 0.8, solid("C3", c3))
     return g
