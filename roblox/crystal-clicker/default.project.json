@@ -1,0 +1,9 @@
+{
+  "name": "CrystalClicker",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": { "GameConfig": { "$path": "src/GameConfig.lua" } },
+    "ServerScriptService": { "GameServer": { "$path": "src/GameServer.server.lua" } },
+    "StarterPlayer": { "StarterPlayerScripts": { "GameClient": { "$path": "src/GameClient.client.lua" } } }
+  }
+}
