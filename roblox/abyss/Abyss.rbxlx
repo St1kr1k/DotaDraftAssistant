@@ -1,0 +1,2927 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+<External>null</External>
+<External>nil</External>
+<Item class="Workspace" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">Workspace</string></Properties>
+</Item>
+<Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000002"><Properties><string name="Name">ReplicatedStorage</string></Properties>
+<Item class="ModuleScript" referent="RBX00000000000000000000000000000003"><Properties><string name="Name">GameConfig</string><ProtectedString name="Source"><![CDATA[-- «В Бездну»: баланс и формулы. Общий модуль сервера и клиента.
+local Config = {}
+
+export type Data = {
+	coins: number,
+	totalCoins: number,
+	step: number, -- сколько ступеней куплено в этом забеге
+	bestStep: number, -- рекорд глубины за всё время
+	bosses: number, -- сколько стражей побеждено в этом забеге
+	ups: { [string]: number },
+	relics: { [string]: { n: number, s: number } }, -- n — копий, s — из них сияющих
+	titles: { [string]: number },
+	title: string?, -- надетое звание
+	tokens: number, -- осколки перерождения (валюта)
+	tokensEver: number,
+	rebirths: number,
+	rups: { [string]: number },
+	digs: number,
+	rolls: number,
+	playTime: number,
+	autoStep: boolean,
+	autoDig: boolean,
+	lastOnline: number?,
+}
+
+function Config.newData(): Data
+	return {
+		coins = 0,
+		totalCoins = 0,
+		step = 0,
+		bestStep = 0,
+		bosses = 0,
+		ups = {},
+		relics = {},
+		titles = {},
+		title = nil,
+		tokens = 0,
+		tokensEver = 0,
+		rebirths = 0,
+		rups = {},
+		digs = 0,
+		rolls = 0,
+		playTime = 0,
+		autoStep = true,
+		autoDig = true,
+		lastOnline = nil,
+	}
+end
+
+--------------------------------------------------------------------------------
+-- Слои
+--------------------------------------------------------------------------------
+Config.STEPS_PER_LAYER = 50
+Config.STEP_DROP = 1.2 -- на сколько ниже каждая ступень
+Config.STEPS_PER_TURN = 30 -- ступеней на полный виток спирали
+Config.SURFACE_Y = 700
+
+export type Layer = {
+	index: number,
+	name: string,
+	wall: Color3,
+	step: Color3,
+	glow: Color3,
+	material: Enum.Material,
+	boss: string,
+	bossColor: Color3,
+}
+
+local LAYER_LIST = {
+	{ "Дёрн", Color3.fromRGB(86, 120, 60), Color3.fromRGB(120, 95, 65), Color3.fromRGB(180, 255, 120), Enum.Material.Grass, "Корнегрыз", Color3.fromRGB(110, 80, 50) },
+	{ "Глина", Color3.fromRGB(160, 95, 60), Color3.fromRGB(190, 130, 90), Color3.fromRGB(255, 170, 110), Enum.Material.Sand, "Глиняный голем", Color3.fromRGB(170, 100, 60) },
+	{ "Известняк", Color3.fromRGB(190, 185, 160), Color3.fromRGB(215, 210, 190), Color3.fromRGB(255, 250, 200), Enum.Material.Limestone, "Костяной червь", Color3.fromRGB(230, 225, 200) },
+	{ "Гранит", Color3.fromRGB(110, 105, 115), Color3.fromRGB(140, 135, 145), Color3.fromRGB(200, 200, 255), Enum.Material.Granite, "Гранитный страж", Color3.fromRGB(90, 90, 100) },
+	{ "Кристальные пещеры", Color3.fromRGB(60, 50, 110), Color3.fromRGB(90, 80, 150), Color3.fromRGB(150, 110, 255), Enum.Material.Slate, "Кристальный паук", Color3.fromRGB(140, 100, 255) },
+	{ "Грибной грот", Color3.fromRGB(40, 70, 70), Color3.fromRGB(60, 100, 95), Color3.fromRGB(80, 255, 220), Enum.Material.Mud, "Грибной владыка", Color3.fromRGB(70, 220, 190) },
+	{ "Магма", Color3.fromRGB(70, 25, 20), Color3.fromRGB(100, 40, 30), Color3.fromRGB(255, 110, 40), Enum.Material.Basalt, "Лавовый змей", Color3.fromRGB(255, 90, 30) },
+	{ "Обсидиан", Color3.fromRGB(25, 20, 35), Color3.fromRGB(45, 35, 60), Color3.fromRGB(200, 80, 255), Enum.Material.Glass, "Обсидиановый рыцарь", Color3.fromRGB(60, 40, 90) },
+	{ "Ледяное сердце", Color3.fromRGB(120, 170, 210), Color3.fromRGB(170, 210, 240), Color3.fromRGB(150, 230, 255), Enum.Material.Ice, "Ледяной титан", Color3.fromRGB(160, 220, 255) },
+	{ "Пустота", Color3.fromRGB(10, 8, 18), Color3.fromRGB(25, 20, 40), Color3.fromRGB(255, 255, 255), Enum.Material.SmoothPlastic, "Пожиратель пустоты", Color3.fromRGB(20, 10, 30) },
+}
+
+Config.Layers = {} :: { Layer }
+for i, l in ipairs(LAYER_LIST) do
+	table.insert(Config.Layers, {
+		index = i,
+		name = l[1],
+		wall = l[2],
+		step = l[3],
+		glow = l[4],
+		material = l[5],
+		boss = l[6],
+		bossColor = l[7],
+	})
+end
+Config.MAX_STEP = #Config.Layers * Config.STEPS_PER_LAYER
+
+-- Слой, в котором находится ступень (1..10)
+function Config.layerOfStep(step: number): number
+	return math.clamp(math.floor((math.max(step, 1) - 1) / Config.STEPS_PER_LAYER) + 1, 1, #Config.Layers)
+end
+
+-- Ступень, на которой стоит страж слоя L (последняя ступень слоя)
+function Config.bossStep(layer: number): number
+	return layer * Config.STEPS_PER_LAYER
+end
+
+-- Положение ступени n в мире (0 — край ямы на поверхности)
+Config.PIT_INNER = 20 -- радиус центрального столба
+Config.PIT_OUTER = 36 -- радиус стены ямы
+Config.STEP_RADIUS = 28
+
+function Config.stepPosition(n: number): Vector3
+	local a = n / Config.STEPS_PER_TURN * math.pi * 2
+	return Vector3.new(
+		math.cos(a) * Config.STEP_RADIUS,
+		Config.SURFACE_Y - n * Config.STEP_DROP,
+		math.sin(a) * Config.STEP_RADIUS
+	)
+end
+
+function Config.stepAngle(n: number): number
+	return n / Config.STEPS_PER_TURN * math.pi * 2
+end
+
+--------------------------------------------------------------------------------
+-- Улучшения за монеты
+--------------------------------------------------------------------------------
+export type Upgrade = {
+	id: string,
+	tree: string, -- "coins" | "luck" | "power"
+	name: string,
+	desc: string,
+	baseCost: number,
+	growth: number,
+	maxLevel: number,
+	needBoss: number, -- сколько стражей нужно победить, чтобы открылось
+}
+
+Config.Upgrades = {
+	{ id = "pick", tree = "coins", name = "Кирка", desc = "+2 монеты/с за уровень", baseCost = 15, growth = 1.32, maxLevel = 100, needBoss = 0 },
+	{ id = "cart", tree = "coins", name = "Тележка", desc = "Доход ×1.2 за уровень", baseCost = 300, growth = 2.6, maxLevel = 50, needBoss = 0 },
+	{ id = "tamp", tree = "coins", name = "Утрамбовка", desc = "Ступени дешевле на 4% за уровень", baseCost = 1500, growth = 2.6, maxLevel = 20, needBoss = 1 },
+	{ id = "echo", tree = "coins", name = "Эхо глубины", desc = "Бонус глубины +0.1% за ступень за уровень", baseCost = 50000, growth = 4, maxLevel = 10, needBoss = 2 },
+	{ id = "horse", tree = "luck", name = "Подкова", desc = "Удача +15% за уровень", baseCost = 400, growth = 1.9, maxLevel = 40, needBoss = 0 },
+	{ id = "lens", tree = "luck", name = "Лупа", desc = "Шанс сияющей находки +15% за уровень", baseCost = 3000, growth = 2.2, maxLevel = 25, needBoss = 1 },
+	{ id = "shovel", tree = "luck", name = "Лопата", desc = "Раскопки дешевле на 6% за уровень", baseCost = 2000, growth = 2.3, maxLevel = 12, needBoss = 1 },
+	{ id = "fist", tree = "power", name = "Кулак", desc = "Урон по стражам ×1.4 за уровень", baseCost = 60, growth = 1.85, maxLevel = 100, needBoss = 0 },
+	{ id = "stamina", tree = "power", name = "Выносливость", desc = "Бой длится +3 с за уровень", baseCost = 1000, growth = 3, maxLevel = 10, needBoss = 1 },
+	{ id = "aim", tree = "power", name = "Меткость", desc = "Шанс крита ×5 +5% за уровень", baseCost = 5000, growth = 2.5, maxLevel = 10, needBoss = 2 },
+} :: { Upgrade }
+
+Config.UpById = {} :: { [string]: Upgrade }
+for _, u in ipairs(Config.Upgrades) do
+	Config.UpById[u.id] = u
+end
+
+function Config.lvl(data: Data, id: string): number
+	return data.ups[id] or 0
+end
+
+function Config.upCost(u: Upgrade, level: number): number
+	return math.ceil(u.baseCost * u.growth ^ level)
+end
+
+--------------------------------------------------------------------------------
+-- Перерождение
+--------------------------------------------------------------------------------
+Config.REBIRTH_NEED_BOSSES = 2
+Config.TOKEN_BONUS = 0.1 -- +10% дохода за каждый полученный осколок
+
+export type RebirthUp = {
+	id: string,
+	name: string,
+	desc: string,
+	baseCost: number,
+	growth: number,
+	maxLevel: number,
+}
+
+Config.RebirthUps = {
+	{ id = "r_income", name = "Жила предков", desc = "Доход ×1.5 за уровень", baseCost = 2, growth = 2, maxLevel = 20 },
+	{ id = "r_power", name = "Сила предков", desc = "Урон по стражам ×2 за уровень", baseCost = 2, growth = 2.2, maxLevel = 20 },
+	{ id = "r_luck", name = "Чутьё", desc = "Удача ×1.25 за уровень", baseCost = 3, growth = 2.5, maxLevel = 10 },
+	{ id = "r_start", name = "Фора", desc = "Начинать забег сразу с +10 ступеней за уровень", baseCost = 3, growth = 2, maxLevel = 4 },
+	{ id = "r_autostep", name = "Ноги сами идут", desc = "Ступени покупаются сами, когда хватает монет (можно выключить)", baseCost = 4, growth = 1, maxLevel = 1 },
+	{ id = "r_autodig", name = "Крот-помощник", desc = "Сам копает на самом глубоком раскопе каждые 4 с (можно выключить)", baseCost = 8, growth = 1, maxLevel = 1 },
+} :: { RebirthUp }
+
+Config.RUpById = {} :: { [string]: RebirthUp }
+for _, r in ipairs(Config.RebirthUps) do
+	Config.RUpById[r.id] = r
+end
+
+function Config.rlvl(data: Data, id: string): number
+	return data.rups[id] or 0
+end
+
+function Config.rupCost(r: RebirthUp, level: number): number
+	return math.floor(r.baseCost * r.growth ^ level)
+end
+
+function Config.tokensOnRebirth(data: Data): number
+	if data.bosses < Config.REBIRTH_NEED_BOSSES then
+		return 0
+	end
+	return math.floor((data.step / 25) ^ 1.6)
+end
+
+--------------------------------------------------------------------------------
+-- Находки (раскопки)
+--------------------------------------------------------------------------------
+export type Rarity = { id: string, name: string, weight: number, bonus: number, color: Color3 }
+Config.Rarities = {
+	{ id = "common", name = "Обычная", weight = 60, bonus = 0.02, color = Color3.fromRGB(200, 200, 210) },
+	{ id = "uncommon", name = "Необычная", weight = 25, bonus = 0.04, color = Color3.fromRGB(100, 230, 120) },
+	{ id = "rare", name = "Редкая", weight = 10, bonus = 0.08, color = Color3.fromRGB(80, 170, 255) },
+	{ id = "epic", name = "Эпическая", weight = 4, bonus = 0.16, color = Color3.fromRGB(190, 100, 255) },
+	{ id = "legend", name = "Легендарная", weight = 1, bonus = 0.4, color = Color3.fromRGB(255, 200, 50) },
+} :: { Rarity }
+
+export type Relic = { id: string, name: string, layer: number, rarity: Rarity, rarityIndex: number }
+
+local RELIC_NAMES = {
+	{ "Ржавый гвоздь", "Старая монета", "Корень-талисман", "Окаменевший жук", "Золотой жёлудь" },
+	{ "Глиняный черепок", "Ракушка", "Зуб ящера", "Глиняный идол", "Яйцо раптора" },
+	{ "Аммонит", "Трилобит", "Череп саблезуба", "Позвонок кита", "Коготь титана" },
+	{ "Кварц", "Слюда", "Гранат", "Сапфир", "Сердце горы" },
+	{ "Аметист", "Изумруд", "Поющий кристалл", "Призма", "Звёздный осколок" },
+	{ "Светящийся гриб", "Спора", "Шляпка-фонарь", "Мицелиевая корона", "Древний гриб" },
+	{ "Вулканическое стекло", "Огненный опал", "Саламандра", "Лавовое сердце", "Перо феникса" },
+	{ "Обсидиановый клинок", "Чёрная жемчужина", "Руна", "Маска древних", "Око бездны" },
+	{ "Ледяной кристалл", "Бивень мамонта", "Замёрзшая слеза", "Снежное сердце", "Вечный лёд" },
+	{ "Осколок тьмы", "Эхо", "Шёпот", "Корона пустоты", "Ядро мира" },
+}
+
+Config.Relics = {} :: { Relic }
+Config.RelicById = {} :: { [string]: Relic }
+Config.RelicsByLayer = {} :: { { Relic } }
+for layer, names in ipairs(RELIC_NAMES) do
+	Config.RelicsByLayer[layer] = {}
+	for r, name in ipairs(names) do
+		local relic: Relic = { id = string.format("L%d_%d", layer, r), name = name, layer = layer, rarity = Config.Rarities[r], rarityIndex = r }
+		table.insert(Config.Relics, relic)
+		table.insert(Config.RelicsByLayer[layer], relic)
+		Config.RelicById[relic.id] = relic
+	end
+end
+
+Config.SHINY_BASE = 1 / 40
+Config.SHINY_MULT = 3
+Config.DIG_SITE_OFFSET = 25 -- раскоп — на 25-й ступени каждого слоя
+
+function Config.digSiteStep(layer: number): number
+	return (layer - 1) * Config.STEPS_PER_LAYER + Config.DIG_SITE_OFFSET
+end
+
+-- Бонус одной находки к доходу (доля)
+function Config.relicBonus(relic: Relic, entry: { n: number, s: number }): number
+	if entry.n <= 0 then
+		return 0
+	end
+	local layerMult = 1 + 0.6 * (relic.layer - 1)
+	local base = relic.rarity.bonus * layerMult * (1 + 0.35 * math.log(entry.n, 2))
+	return base * (1 + (Config.SHINY_MULT - 1) * math.min(entry.s, 1))
+end
+
+function Config.relicMult(data: Data): number
+	local total = 0
+	for id, entry in pairs(data.relics) do
+		local relic = Config.RelicById[id]
+		if relic then
+			total += Config.relicBonus(relic, entry)
+		end
+	end
+	return 1 + total
+end
+
+--------------------------------------------------------------------------------
+-- Звания (рулетка)
+--------------------------------------------------------------------------------
+export type Title = { id: string, name: string, chance: number, mult: number, color: Color3 }
+Config.Titles = {
+	{ id = "t1", name = "Новичок", chance = 2, mult = 1.1, color = Color3.fromRGB(200, 200, 210) },
+	{ id = "t2", name = "Копатель", chance = 5, mult = 1.25, color = Color3.fromRGB(180, 140, 90) },
+	{ id = "t3", name = "Спелеолог", chance = 12, mult = 1.5, color = Color3.fromRGB(100, 230, 120) },
+	{ id = "t4", name = "Исследователь", chance = 30, mult = 2, color = Color3.fromRGB(80, 200, 255) },
+	{ id = "t5", name = "Бывалый", chance = 80, mult = 3, color = Color3.fromRGB(80, 140, 255) },
+	{ id = "t6", name = "Глубинный", chance = 200, mult = 4.5, color = Color3.fromRGB(150, 110, 255) },
+	{ id = "t7", name = "Хранитель тьмы", chance = 600, mult = 7, color = Color3.fromRGB(200, 80, 255) },
+	{ id = "t8", name = "Легенда шахт", chance = 2000, mult = 12, color = Color3.fromRGB(255, 200, 50) },
+	{ id = "t9", name = "Повелитель бездны", chance = 8000, mult = 20, color = Color3.fromRGB(255, 120, 40) },
+	{ id = "t10", name = "Сердце мира", chance = 40000, mult = 40, color = Color3.fromRGB(255, 60, 90) },
+	{ id = "t11", name = "Безднорождённый", chance = 250000, mult = 100, color = Color3.fromRGB(255, 255, 255) },
+} :: { Title }
+Config.TitleById = {} :: { [string]: Title }
+for _, t in ipairs(Config.Titles) do
+	Config.TitleById[t.id] = t
+end
+
+function Config.titleMult(data: Data): number
+	local t = data.title and Config.TitleById[data.title]
+	return t and t.mult or 1
+end
+
+-- Бросок: идём от самого редкого, шанс каждого = удача / N
+function Config.rollTitle(luck: number, rng: () -> number): Title
+	for i = #Config.Titles, 2, -1 do
+		local t = Config.Titles[i]
+		if rng() < math.min(1, luck / t.chance) then
+			return t
+		end
+	end
+	return Config.Titles[1]
+end
+
+--------------------------------------------------------------------------------
+-- Формулы
+--------------------------------------------------------------------------------
+Config.DEPTH_BONUS = 0.06 -- +6% дохода за каждую ступень (сложный процент)
+
+function Config.luck(data: Data): number
+	return (1 + 0.15 * Config.lvl(data, "horse")) * 1.25 ^ Config.rlvl(data, "r_luck")
+end
+
+function Config.depthMult(data: Data): number
+	local per = Config.DEPTH_BONUS + 0.001 * Config.lvl(data, "echo")
+	return (1 + per) ^ data.step
+end
+
+function Config.income(data: Data): number
+	local base = 1 + 2 * Config.lvl(data, "pick")
+	local m = 1.2 ^ Config.lvl(data, "cart")
+	m *= Config.depthMult(data)
+	m *= Config.relicMult(data)
+	m *= Config.titleMult(data)
+	m *= 1 + Config.TOKEN_BONUS * data.tokensEver
+	m *= 1.5 ^ Config.rlvl(data, "r_income")
+	return base * m
+end
+
+function Config.stepCost(data: Data, n: number): number
+	-- n — номер покупаемой ступени (1..MAX_STEP)
+	local layer = Config.layerOfStep(n)
+	return math.ceil(8 * 1.15 ^ (n - 1) * 10 ^ (layer - 1) * 0.96 ^ Config.lvl(data, "tamp"))
+end
+
+function Config.canBuyStep(data: Data): (boolean, string?)
+	local n = data.step + 1
+	if n > Config.MAX_STEP then
+		return false, "Дно достигнуто!"
+	end
+	-- Пройти дальше последней ступени слоя можно только победив стража
+	local layer = Config.layerOfStep(n)
+	if data.bosses < layer - 1 then
+		return false, "Сначала победи стража слоя"
+	end
+	return true, nil
+end
+
+function Config.bossHP(layer: number): number
+	return 120 * 16 ^ (layer - 1)
+end
+
+function Config.damagePerSec(data: Data): number
+	return 10 * 1.4 ^ Config.lvl(data, "fist") * 2 ^ Config.rlvl(data, "r_power") * (1 + 0.04 * data.step)
+end
+
+function Config.fightDuration(data: Data): number
+	return 15 + 3 * Config.lvl(data, "stamina")
+end
+
+function Config.critChance(data: Data): number
+	return 0.05 * Config.lvl(data, "aim")
+end
+
+function Config.digCost(data: Data, layer: number): number
+	return math.ceil(40 * 6 ^ (layer - 1) * 0.94 ^ Config.lvl(data, "shovel") * (1 + data.step * 0.02) ^ 2)
+end
+
+function Config.titleRollCost(data: Data): number
+	return math.max(100, math.ceil(Config.income(data) * 45 / Config.titleMult(data)))
+end
+
+function Config.shinyChance(data: Data): number
+	return Config.SHINY_BASE * (1 + 0.15 * Config.lvl(data, "lens")) * Config.luck(data) ^ 0.5
+end
+
+-- Случайная находка слоя с учётом удачи
+function Config.rollRelic(layer: number, luck: number, rng: () -> number): Relic
+	local list = Config.RelicsByLayer[layer]
+	local weights = {}
+	local total = 0
+	for i, relic in ipairs(list) do
+		-- удача усиливает редкие: вес × удача^(индекс редкости − 1)
+		local w = relic.rarity.weight * luck ^ (i - 1)
+		weights[i] = w
+		total += w
+	end
+	local x = rng() * total
+	for i, w in ipairs(weights) do
+		x -= w
+		if x <= 0 then
+			return list[i]
+		end
+	end
+	return list[#list]
+end
+
+Config.OFFLINE_RATE = 0.4
+Config.OFFLINE_MAX = 3 * 3600
+
+--------------------------------------------------------------------------------
+-- Форматирование
+--------------------------------------------------------------------------------
+local SUFFIXES = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc", "UDc", "DDc", "TDc", "QaDc", "QiDc", "SxDc", "SpDc", "OcDc", "NoDc", "Vg" }
+
+function Config.format(n: number): string
+	if n ~= n then
+		return "0"
+	end
+	if n < 1000 then
+		if n < 10 and n ~= math.floor(n) then
+			return string.format("%.1f", math.floor(n * 10) / 10)
+		end
+		return tostring(math.floor(n))
+	end
+	local i = 1
+	local v = n
+	while v >= 1000 and i < #SUFFIXES do
+		v /= 1000
+		i += 1
+	end
+	if v >= 1000 then
+		return string.format("%.2e", n)
+	elseif v >= 100 then
+		return string.format("%d%s", math.floor(v), SUFFIXES[i])
+	elseif v >= 10 then
+		return string.format("%.1f%s", math.floor(v * 10) / 10, SUFFIXES[i])
+	end
+	return string.format("%.2f%s", math.floor(v * 100) / 100, SUFFIXES[i])
+end
+
+function Config.formatTime(seconds: number): string
+	seconds = math.max(0, math.floor(seconds))
+	local h = math.floor(seconds / 3600)
+	local m = math.floor(seconds % 3600 / 60)
+	local s = seconds % 60
+	if h > 0 then
+		return string.format("%d ч %02d мин", h, m)
+	elseif m > 0 then
+		return string.format("%d мин %02d с", m, s)
+	end
+	return string.format("%d с", s)
+end
+
+function Config.formatChance(n: number): string
+	if n >= 1000 then
+		return "1/" .. Config.format(n)
+	end
+	return "1/" .. tostring(n)
+end
+
+return Config
+]]></ProtectedString></Properties></Item>
+</Item>
+<Item class="ServerScriptService" referent="RBX00000000000000000000000000000004"><Properties><string name="Name">ServerScriptService</string></Properties>
+<Item class="Script" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">GameServer</string><ProtectedString name="Source"><![CDATA[-- Сервер «В Бездну»: экономика, ступени, стражи, раскопки, звания, перерождение, сохранение.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DataStoreService = game:GetService("DataStoreService")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+local World = require(script:WaitForChild("World"))
+
+type Data = Config.Data
+
+--------------------------------------------------------------------------------
+-- Хранилища
+--------------------------------------------------------------------------------
+local store: DataStore? = nil
+local topStore: OrderedDataStore? = nil
+do
+	local ok, err = pcall(function()
+		store = DataStoreService:GetDataStore("Abyss_v1")
+		topStore = DataStoreService:GetOrderedDataStore("Abyss_Top_v1")
+	end)
+	if not ok then
+		warn("DataStore недоступен:", err)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Remotes
+--------------------------------------------------------------------------------
+local remotes = Instance.new("Folder")
+remotes.Name = "Remotes"
+local function remote(name: string): RemoteEvent
+	local r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = remotes
+	return r
+end
+local R = {
+	BuyStep = remote("BuyStep"),
+	BuyUp = remote("BuyUp"),
+	BuyRUp = remote("BuyRUp"),
+	Roll = remote("Roll"),
+	Rebirth = remote("Rebirth"),
+	Toggle = remote("Toggle"),
+	Teleport = remote("Teleport"),
+	Fight = remote("Fight"),
+	Dig = remote("Dig"),
+	State = remote("State"),
+	Event = remote("Event"),
+}
+remotes.Parent = ReplicatedStorage
+
+local world = World.build()
+
+--------------------------------------------------------------------------------
+-- Сессии
+--------------------------------------------------------------------------------
+type Fight = { layer: number, hp: number, maxHp: number, timeLeft: number }
+
+type Session = {
+	player: Player,
+	data: Data,
+	income: number,
+	fight: Fight?,
+	lastAction: number,
+	actions: number,
+	autoStepTimer: number,
+	autoDigTimer: number,
+	loaded: boolean,
+	ready: boolean,
+}
+
+local sessions: { [Player]: Session } = {}
+
+local function num(v: any): number
+	local n = tonumber(v)
+	if n == nil or n ~= n or n == math.huge then
+		return 0
+	end
+	return math.max(0, n)
+end
+
+local function sanitize(saved: any): Data
+	local d = Config.newData()
+	if type(saved) ~= "table" then
+		return d
+	end
+	d.coins = num(saved.coins)
+	d.totalCoins = num(saved.totalCoins)
+	d.step = math.clamp(math.floor(num(saved.step)), 0, Config.MAX_STEP)
+	d.bestStep = math.clamp(math.floor(num(saved.bestStep)), 0, Config.MAX_STEP)
+	d.bosses = math.clamp(math.floor(num(saved.bosses)), 0, #Config.Layers)
+	d.tokens = math.floor(num(saved.tokens))
+	d.tokensEver = math.floor(num(saved.tokensEver))
+	d.rebirths = math.floor(num(saved.rebirths))
+	d.digs = math.floor(num(saved.digs))
+	d.rolls = math.floor(num(saved.rolls))
+	d.playTime = num(saved.playTime)
+	d.autoStep = saved.autoStep ~= false
+	d.autoDig = saved.autoDig ~= false
+	d.lastOnline = tonumber(saved.lastOnline)
+	if type(saved.title) == "string" and Config.TitleById[saved.title] then
+		d.title = saved.title
+	end
+	if type(saved.ups) == "table" then
+		for id, lvl in pairs(saved.ups) do
+			local u = Config.UpById[id]
+			if u then
+				d.ups[id] = math.min(u.maxLevel, math.floor(num(lvl)))
+			end
+		end
+	end
+	if type(saved.rups) == "table" then
+		for id, lvl in pairs(saved.rups) do
+			local r = Config.RUpById[id]
+			if r then
+				d.rups[id] = math.min(r.maxLevel, math.floor(num(lvl)))
+			end
+		end
+	end
+	if type(saved.relics) == "table" then
+		for id, e in pairs(saved.relics) do
+			if Config.RelicById[id] and type(e) == "table" then
+				d.relics[id] = { n = math.floor(num(e.n)), s = math.floor(num(e.s)) }
+			end
+		end
+	end
+	if type(saved.titles) == "table" then
+		for id, n in pairs(saved.titles) do
+			if Config.TitleById[id] then
+				d.titles[id] = math.floor(num(n))
+			end
+		end
+	end
+	return d
+end
+
+local function recompute(s: Session)
+	s.income = Config.income(s.data)
+end
+
+local function event(s: Session, kind: string, ...)
+	R.Event:FireClient(s.player, kind, ...)
+end
+
+local function sendState(s: Session)
+	local d = s.data
+	local f = s.fight
+	R.State:FireClient(s.player, {
+		coins = d.coins,
+		totalCoins = d.totalCoins,
+		step = d.step,
+		bestStep = d.bestStep,
+		bosses = d.bosses,
+		ups = d.ups,
+		relics = d.relics,
+		titles = d.titles,
+		title = d.title,
+		tokens = d.tokens,
+		tokensEver = d.tokensEver,
+		rebirths = d.rebirths,
+		rups = d.rups,
+		digs = d.digs,
+		rolls = d.rolls,
+		playTime = d.playTime,
+		autoStep = d.autoStep,
+		autoDig = d.autoDig,
+		income = s.income,
+		fight = f and { layer = f.layer, hp = f.hp, maxHp = f.maxHp, timeLeft = f.timeLeft } or nil,
+	})
+end
+
+local function addCoins(s: Session, amount: number)
+	if amount ~= amount or amount <= 0 then
+		return
+	end
+	s.data.coins += amount
+	s.data.totalCoins += amount
+end
+
+local function setLeaderstats(s: Session)
+	local ls = s.player:FindFirstChild("leaderstats")
+	if not ls then
+		return
+	end
+	local st = ls:FindFirstChild("⬇ Глубина") :: IntValue?
+	if st then
+		st.Value = s.data.step
+	end
+	local rb = ls:FindFirstChild("🔁 Перерожд.") :: IntValue?
+	if rb then
+		rb.Value = s.data.rebirths
+	end
+end
+
+-- Звание над головой
+local function updateNameplate(s: Session)
+	local char = s.player.Character
+	local head = char and char:FindFirstChild("Head") :: BasePart?
+	if not head then
+		return
+	end
+	local bb = head:FindFirstChild("TitleTag") :: BillboardGui?
+	if not bb then
+		local newBB = Instance.new("BillboardGui")
+		newBB.Name = "TitleTag"
+		newBB.Size = UDim2.fromOffset(220, 30)
+		newBB.StudsOffset = Vector3.new(0, 2.6, 0)
+		newBB.MaxDistance = 80
+		newBB.LightInfluence = 0
+		local t = Instance.new("TextLabel")
+		t.Name = "Text"
+		t.Size = UDim2.fromScale(1, 1)
+		t.BackgroundTransparency = 1
+		t.TextScaled = true
+		t.Font = Enum.Font.FredokaOne
+		t.TextStrokeTransparency = 0.2
+		t.Parent = newBB
+		newBB.Parent = head
+		bb = newBB
+	end
+	local label = (bb :: BillboardGui):FindFirstChild("Text") :: TextLabel
+	local title = s.data.title and Config.TitleById[s.data.title]
+	if title then
+		label.Text = "🎖 " .. title.name
+		label.TextColor3 = title.color
+	else
+		label.Text = ""
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Сохранение и топ
+--------------------------------------------------------------------------------
+local function save(player: Player)
+	local s = sessions[player]
+	if not s or not s.loaded or not store then
+		return
+	end
+	local d = s.data
+	local payload = {
+		coins = d.coins,
+		totalCoins = d.totalCoins,
+		step = d.step,
+		bestStep = d.bestStep,
+		bosses = d.bosses,
+		ups = d.ups,
+		relics = d.relics,
+		titles = d.titles,
+		title = d.title,
+		tokens = d.tokens,
+		tokensEver = d.tokensEver,
+		rebirths = d.rebirths,
+		rups = d.rups,
+		digs = d.digs,
+		rolls = d.rolls,
+		playTime = d.playTime,
+		autoStep = d.autoStep,
+		autoDig = d.autoDig,
+		lastOnline = os.time(),
+	}
+	local ok, err = pcall(function()
+		(store :: DataStore):SetAsync("p_" .. player.UserId, payload)
+	end)
+	if not ok then
+		warn("Не удалось сохранить", player.Name, err)
+	end
+	if topStore and d.bestStep > 0 then
+		pcall(function()
+			(topStore :: OrderedDataStore):SetAsync("u_" .. player.UserId, d.bestStep)
+		end)
+	end
+end
+
+local nameCache: { [number]: string } = {}
+local function refreshLeaderboard()
+	if not topStore then
+		World.setLeaderboard({})
+		return
+	end
+	local ok, pages = pcall(function()
+		return (topStore :: OrderedDataStore):GetSortedAsync(false, 10)
+	end)
+	if not ok or not pages then
+		return
+	end
+	local rows = {}
+	for _, entry in ipairs((pages :: DataStorePages):GetCurrentPage()) do
+		local uid = tonumber(string.sub(entry.key, 3))
+		if uid then
+			local name = nameCache[uid]
+			if not name then
+				local okName, n = pcall(function()
+					return Players:GetNameFromUserIdAsync(uid)
+				end)
+				name = okName and n or ("Игрок " .. uid)
+				nameCache[uid] = name
+			end
+			table.insert(rows, { name = name :: string, value = entry.value })
+		end
+	end
+	World.setLeaderboard(rows)
+end
+
+--------------------------------------------------------------------------------
+-- Вход / выход
+--------------------------------------------------------------------------------
+local function teleport(s: Session, where: string)
+	local char = s.player.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then
+		return
+	end
+	if where == "edge" and s.data.step > 0 then
+		char:PivotTo(World.standCFrame(s.data.step))
+	elseif where == "boss" then
+		local layer = s.data.bosses + 1
+		if layer <= #Config.Layers and s.data.step >= Config.bossStep(layer) then
+			char:PivotTo(World.standCFrame(Config.bossStep(layer)))
+		end
+	elseif where == "dig" then
+		local layer = Config.layerOfStep(s.data.step)
+		if s.data.step < Config.digSiteStep(layer) then
+			layer -= 1
+		end
+		if layer >= 1 then
+			char:PivotTo(World.standCFrame(Config.digSiteStep(layer) - 1))
+		end
+	else
+		char:PivotTo(world.spawnCFrame)
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	local ls = Instance.new("Folder")
+	ls.Name = "leaderstats"
+	local depth = Instance.new("IntValue")
+	depth.Name = "⬇ Глубина"
+	depth.Parent = ls
+	local reb = Instance.new("IntValue")
+	reb.Name = "🔁 Перерожд."
+	reb.Parent = ls
+	ls.Parent = player
+
+	local s: Session = {
+		player = player,
+		data = Config.newData(),
+		income = 1,
+		fight = nil,
+		lastAction = 0,
+		actions = 0,
+		autoStepTimer = 0,
+		autoDigTimer = 0,
+		loaded = false,
+		ready = false,
+	}
+	sessions[player] = s
+
+	player.CharacterAdded:Connect(function(char)
+		char:WaitForChild("Head", 10)
+		updateNameplate(s)
+	end)
+
+	local saved = nil
+	local loadedOk = true
+	if store then
+		local ok, result = pcall(function()
+			return (store :: DataStore):GetAsync("p_" .. player.UserId)
+		end)
+		if ok then
+			saved = result
+		else
+			loadedOk = false
+			warn("Не удалось загрузить", player.Name, result)
+		end
+	end
+	if not player.Parent then
+		return
+	end
+	s.data = sanitize(saved)
+	s.loaded = loadedOk
+	recompute(s)
+	s.ready = true
+	setLeaderstats(s)
+	updateNameplate(s)
+	player:SetAttribute("Step", s.data.step)
+
+	local d = s.data
+	if d.lastOnline then
+		local away = os.time() - d.lastOnline
+		local earned = s.income * math.clamp(away, 0, Config.OFFLINE_MAX) * Config.OFFLINE_RATE
+		if away >= 60 and earned >= 1 then
+			addCoins(s, earned)
+			task.delay(2, function()
+				if player.Parent then
+					event(s, "offline", earned, away)
+				end
+			end)
+		end
+	else
+		task.delay(2, function()
+			if player.Parent then
+				event(s, "welcome")
+			end
+		end)
+	end
+	if not loadedOk then
+		event(s, "message", "⚠ Не удалось загрузить сохранение. Прогресс этой сессии не сохранится — перезайди позже.")
+	end
+	sendState(s)
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+for _, p in ipairs(Players:GetPlayers()) do
+	task.spawn(onPlayerAdded, p)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	save(player)
+	sessions[player] = nil
+end)
+
+game:BindToClose(function()
+	local pending = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		pending += 1
+		task.spawn(function()
+			save(player)
+			pending -= 1
+		end)
+	end
+	local t = os.clock()
+	while pending > 0 and os.clock() - t < 25 do
+		task.wait(0.1)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Защита от спама
+--------------------------------------------------------------------------------
+local function allow(s: Session?): boolean
+	if not s or not s.ready then
+		return false
+	end
+	local now = os.clock()
+	if now - s.lastAction > 1 then
+		s.lastAction = now
+		s.actions = 0
+	end
+	s.actions += 1
+	return s.actions <= 25
+end
+
+--------------------------------------------------------------------------------
+-- Ступени
+--------------------------------------------------------------------------------
+local function setStep(s: Session, n: number)
+	s.data.step = n
+	if n > s.data.bestStep then
+		s.data.bestStep = n
+	end
+	s.player:SetAttribute("Step", n)
+end
+
+local function buySteps(s: Session, limit: number): number
+	local bought = 0
+	local d = s.data
+	while bought < limit do
+		local ok = Config.canBuyStep(d)
+		if not ok then
+			break
+		end
+		local cost = Config.stepCost(d, d.step + 1)
+		if d.coins < cost then
+			break
+		end
+		d.coins -= cost
+		setStep(s, d.step + 1)
+		bought += 1
+		local n = d.step
+		if n % Config.STEPS_PER_LAYER == 0 then
+			event(s, "bossReached", Config.layerOfStep(n))
+		elseif n % Config.STEPS_PER_LAYER == 1 and n > 1 then
+			event(s, "newLayer", Config.layerOfStep(n))
+		elseif n == Config.digSiteStep(Config.layerOfStep(n)) then
+			event(s, "digUnlocked", Config.layerOfStep(n))
+		end
+	end
+	if bought > 0 then
+		recompute(s)
+	end
+	return bought
+end
+
+R.BuyStep.OnServerEvent:Connect(function(player, mode)
+	local s = sessions[player]
+	if not allow(s) then
+		return
+	end
+	local ses = s :: Session
+	if buySteps(ses, mode == "max" and 1000 or 1) > 0 then
+		sendState(ses)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Улучшения
+--------------------------------------------------------------------------------
+R.BuyUp.OnServerEvent:Connect(function(player, id, mode)
+	local s = sessions[player]
+	local u = type(id) == "string" and Config.UpById[id] or nil
+	if not allow(s) or not u then
+		return
+	end
+	local ses = s :: Session
+	local d = ses.data
+	if d.bosses < u.needBoss then
+		return
+	end
+	local count = 0
+	local limit = mode == "max" and 1000 or 1
+	while count < limit do
+		local lvl = Config.lvl(d, u.id)
+		if lvl >= u.maxLevel then
+			break
+		end
+		local cost = Config.upCost(u, lvl)
+		if d.coins < cost then
+			break
+		end
+		d.coins -= cost
+		d.ups[u.id] = lvl + 1
+		count += 1
+	end
+	if count > 0 then
+		recompute(ses)
+		event(ses, "upgraded", u.id, count)
+		sendState(ses)
+	end
+end)
+
+R.BuyRUp.OnServerEvent:Connect(function(player, id)
+	local s = sessions[player]
+	local r = type(id) == "string" and Config.RUpById[id] or nil
+	if not allow(s) or not r then
+		return
+	end
+	local ses = s :: Session
+	local d = ses.data
+	local lvl = Config.rlvl(d, r.id)
+	if lvl >= r.maxLevel then
+		return
+	end
+	local cost = Config.rupCost(r, lvl)
+	if d.tokens < cost then
+		return
+	end
+	d.tokens -= cost
+	d.rups[r.id] = lvl + 1
+	recompute(ses)
+	event(ses, "message", string.format("💠 %s — уровень %d", r.name, lvl + 1))
+	sendState(ses)
+end)
+
+R.Toggle.OnServerEvent:Connect(function(player, which)
+	local s = sessions[player]
+	if not allow(s) then
+		return
+	end
+	local ses = s :: Session
+	if which == "autoStep" then
+		ses.data.autoStep = not ses.data.autoStep
+	elseif which == "autoDig" then
+		ses.data.autoDig = not ses.data.autoDig
+	end
+	sendState(ses)
+end)
+
+R.Teleport.OnServerEvent:Connect(function(player, where)
+	local s = sessions[player]
+	if allow(s) and type(where) == "string" then
+		teleport(s :: Session, where)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Звания
+--------------------------------------------------------------------------------
+local function roll(s: Session)
+	local d = s.data
+	local cost = Config.titleRollCost(d)
+	if d.coins < cost then
+		event(s, "message", "Не хватает монет на бросок: нужно 💰 " .. Config.format(cost))
+		return
+	end
+	d.coins -= cost
+	d.rolls += 1
+	local t = Config.rollTitle(Config.luck(d), math.random)
+	d.titles[t.id] = (d.titles[t.id] or 0) + 1
+	local better = Config.titleMult(d) < t.mult
+	if better then
+		d.title = t.id
+		updateNameplate(s)
+		recompute(s)
+	end
+	event(s, "title", t.id, better)
+	sendState(s)
+end
+
+local lastRoll: { [Player]: number } = {}
+local function tryRoll(player: Player)
+	local s = sessions[player]
+	if not allow(s) then
+		return
+	end
+	local now = os.clock()
+	if now - (lastRoll[player] or 0) < 0.6 then
+		return
+	end
+	lastRoll[player] = now
+	roll(s :: Session)
+end
+R.Roll.OnServerEvent:Connect(tryRoll)
+local altarPrompt = world.altar:FindFirstChildOfClass("ProximityPrompt")
+if altarPrompt then
+	altarPrompt.Triggered:Connect(tryRoll)
+end
+
+--------------------------------------------------------------------------------
+-- Раскопки
+--------------------------------------------------------------------------------
+local function dig(s: Session, layer: number, auto: boolean): boolean
+	local d = s.data
+	if layer < 1 or layer > #Config.Layers or d.step < Config.digSiteStep(layer) then
+		return false
+	end
+	local cost = Config.digCost(d, layer)
+	if d.coins < cost then
+		if not auto then
+			event(s, "message", "Не хватает монет на раскопки: нужно 💰 " .. Config.format(cost))
+		end
+		return false
+	end
+	d.coins -= cost
+	d.digs += 1
+	local relic = Config.rollRelic(layer, Config.luck(d), math.random)
+	local shiny = math.random() < Config.shinyChance(d)
+	local entry = d.relics[relic.id]
+	local isNew = entry == nil
+	if not entry then
+		entry = { n = 0, s = 0 }
+		d.relics[relic.id] = entry
+	end
+	local e = entry :: { n: number, s: number }
+	e.n += 1
+	if shiny then
+		e.s += 1
+	end
+	recompute(s)
+	event(s, "relic", relic.id, shiny, isNew, auto)
+	return true
+end
+
+local function deepestDigLayer(d: Data): number
+	local layer = Config.layerOfStep(d.step)
+	if d.step < Config.digSiteStep(layer) then
+		layer -= 1
+	end
+	return layer
+end
+
+for _, site in ipairs(world.digs) do
+	site.prompt.Triggered:Connect(function(player)
+		local s = sessions[player]
+		if not allow(s) then
+			return
+		end
+		local ses = s :: Session
+		if ses.data.step < Config.digSiteStep(site.layer) then
+			event(ses, "message", "Этот раскоп откроется, когда дойдёшь до ступени " .. Config.digSiteStep(site.layer))
+			return
+		end
+		if dig(ses, site.layer, false) then
+			sendState(ses)
+		end
+	end)
+end
+
+R.Dig.OnServerEvent:Connect(function(player)
+	local s = sessions[player]
+	if not allow(s) then
+		return
+	end
+	local ses = s :: Session
+	local layer = deepestDigLayer(ses.data)
+	if layer < 1 then
+		event(ses, "message", "Первый раскоп — на ступени " .. Config.digSiteStep(1))
+		return
+	end
+	if dig(ses, layer, false) then
+		sendState(ses)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Бои со стражами
+--------------------------------------------------------------------------------
+local function startFight(s: Session, layer: number)
+	local d = s.data
+	if s.fight then
+		return
+	end
+	if d.bosses ~= layer - 1 or d.step < Config.bossStep(layer) then
+		event(s, "message", "Сначала дойди до стража этого слоя")
+		return
+	end
+	local hp = Config.bossHP(layer)
+	s.fight = { layer = layer, hp = hp, maxHp = hp, timeLeft = Config.fightDuration(d) }
+	event(s, "fightStart", layer)
+	sendState(s)
+end
+
+for _, boss in ipairs(world.bosses) do
+	boss.prompt.Triggered:Connect(function(player)
+		local s = sessions[player]
+		if allow(s) then
+			startFight(s :: Session, boss.layer)
+		end
+	end)
+end
+
+R.Fight.OnServerEvent:Connect(function(player)
+	local s = sessions[player]
+	if not allow(s) then
+		return
+	end
+	local ses = s :: Session
+	startFight(ses, ses.data.bosses + 1)
+end)
+
+local function tickFight(s: Session, dt: number)
+	local f = s.fight
+	if not f then
+		return
+	end
+	local d = s.data
+	local dmg = Config.damagePerSec(d) * dt
+	if math.random() < Config.critChance(d) then
+		dmg *= 5
+	end
+	f.hp -= dmg
+	f.timeLeft -= dt
+	if f.hp <= 0 then
+		s.fight = nil
+		d.bosses = math.max(d.bosses, f.layer)
+		local reward = Config.stepCost(d, Config.bossStep(f.layer)) * 3
+		addCoins(s, reward)
+		recompute(s)
+		event(s, "fightWon", f.layer, reward)
+		sendState(s)
+	elseif f.timeLeft <= 0 then
+		s.fight = nil
+		event(s, "fightLost", f.layer, f.hp / f.maxHp)
+		sendState(s)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Перерождение
+--------------------------------------------------------------------------------
+R.Rebirth.OnServerEvent:Connect(function(player)
+	local s = sessions[player]
+	if not allow(s) then
+		return
+	end
+	local ses = s :: Session
+	local d = ses.data
+	local gain = Config.tokensOnRebirth(d)
+	if gain < 1 then
+		return
+	end
+	d.tokens += gain
+	d.tokensEver += gain
+	d.rebirths += 1
+	d.coins = 0
+	d.ups = {}
+	d.bosses = 0
+	ses.fight = nil
+	setStep(ses, math.min(10 * Config.rlvl(d, "r_start"), Config.STEPS_PER_LAYER - 1))
+	recompute(ses)
+	setLeaderstats(ses)
+	event(ses, "rebirth", gain)
+	sendState(ses)
+	teleport(ses, "edge")
+	task.spawn(save, player)
+end)
+
+--------------------------------------------------------------------------------
+-- Главный цикл
+--------------------------------------------------------------------------------
+local TICK = 0.2
+local stateTimer, slowTimer = 0, 0
+
+task.spawn(function()
+	while true do
+		local dt = task.wait(TICK)
+		stateTimer += dt
+		slowTimer += dt
+		for _, s in pairs(sessions) do
+			if s.ready then
+				local d = s.data
+				d.playTime += dt
+				addCoins(s, s.income * dt)
+				tickFight(s, dt)
+
+				s.autoStepTimer += dt
+				if s.autoStepTimer >= 1 then
+					s.autoStepTimer = 0
+					if Config.rlvl(d, "r_autostep") >= 1 and d.autoStep then
+						buySteps(s, 50)
+					end
+				end
+				s.autoDigTimer += dt
+				if s.autoDigTimer >= 4 then
+					s.autoDigTimer = 0
+					if Config.rlvl(d, "r_autodig") >= 1 and d.autoDig then
+						local layer = deepestDigLayer(d)
+						if layer >= 1 and Config.digCost(d, layer) <= d.coins * 0.25 then
+							dig(s, layer, true)
+						end
+					end
+				end
+			end
+		end
+		if stateTimer >= 0.5 then
+			stateTimer = 0
+			for _, s in pairs(sessions) do
+				if s.ready then
+					sendState(s)
+					setLeaderstats(s)
+				end
+			end
+		end
+		if slowTimer >= 90 then
+			slowTimer = 0
+			for player in pairs(sessions) do
+				task.spawn(save, player)
+			end
+			task.spawn(refreshLeaderboard)
+		end
+	end
+end)
+
+task.delay(5, refreshLeaderboard)
+]]></ProtectedString></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">World</string><ProtectedString name="Source"><![CDATA[-- Постройка мира «В Бездну»: поверхность, яма со спиральной лестницей, слои, стражи, раскопы, алтарь.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+
+local World = {}
+
+local SY = Config.SURFACE_Y
+local WALL_R = 37.5
+local SEGMENTS = 24
+
+local function A(x: number, y: number, z: number): CFrame
+	return CFrame.Angles(math.rad(x), math.rad(y), math.rad(z))
+end
+
+local function part(parent: Instance, props: { [string]: any }): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in pairs(props) do
+		(p :: any)[k] = v
+	end
+	p.Parent = parent
+	return p
+end
+
+local function billboard(adornee: BasePart, size: UDim2, offset: Vector3, maxDistance: number, alwaysOnTop: boolean?): BillboardGui
+	local bb = Instance.new("BillboardGui")
+	bb.Size = size
+	bb.StudsOffsetWorldSpace = offset
+	bb.AlwaysOnTop = alwaysOnTop == true
+	bb.LightInfluence = 0
+	bb.MaxDistance = maxDistance
+	bb.Adornee = adornee
+	bb.Parent = adornee
+	return bb
+end
+
+local function text(parent: Instance, props: { [string]: any }): TextLabel
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.TextScaled = true
+	t.Font = Enum.Font.FredokaOne
+	t.TextColor3 = Color3.new(1, 1, 1)
+	t.TextStrokeTransparency = 0.3
+	for k, v in pairs(props) do
+		(t :: any)[k] = v
+	end
+	t.Parent = parent
+	return t
+end
+
+-- CFrame ступени: ось X смотрит от центра наружу
+local function stepCFrame(n: number): CFrame
+	local pos = Config.stepPosition(n)
+	return CFrame.new(pos - Vector3.new(0, 0.6, 0)) * CFrame.Angles(0, -Config.stepAngle(n), 0)
+end
+World.stepCFrame = stepCFrame
+
+-- Точка, куда ставить игрока на ступени n
+function World.standCFrame(n: number): CFrame
+	local pos = Config.stepPosition(n) + Vector3.new(0, 3.5, 0)
+	-- смотрим вниз по лестнице
+	local ahead = Config.stepPosition(n + 1) + Vector3.new(0, 3.5, 0)
+	return CFrame.lookAt(pos, ahead)
+end
+
+--------------------------------------------------------------------------------
+-- Поверхность
+--------------------------------------------------------------------------------
+local leaderRows: { TextLabel } = {}
+
+local function buildSurface(root: Instance): (BasePart, CFrame)
+	local surface = Instance.new("Model")
+	surface.Name = "Surface"
+	local grass = Color3.fromRGB(80, 130, 70)
+
+	-- Кольцо вокруг ямы
+	for i = 0, SEGMENTS - 1 do
+		local a = i / SEGMENTS * math.pi * 2
+		local r = (WALL_R + 62) / 2
+		part(surface, {
+			Name = "Ring",
+			Size = Vector3.new(62 - WALL_R + 1, 4, 2 * math.pi * 62 / SEGMENTS + 1),
+			CFrame = CFrame.new(math.cos(a) * r, SY - 2, math.sin(a) * r) * CFrame.Angles(0, -a, 0),
+			Color = grass,
+			Material = Enum.Material.Grass,
+		})
+	end
+	-- Земля вокруг (квадрат с дырой)
+	local H = 44 -- полуширина дыры (кольцо её перекрывает)
+	local S = 400
+	local function slab(cx: number, cz: number, sx: number, sz: number)
+		part(surface, {
+			Name = "Ground",
+			Size = Vector3.new(sx, 4, sz),
+			CFrame = CFrame.new(cx, SY - 2.02, cz),
+			Color = grass,
+			Material = Enum.Material.Grass,
+		})
+	end
+	slab(0, (H + S) / 2, 2 * S, S - H)
+	slab(0, -(H + S) / 2, 2 * S, S - H)
+	slab((H + S) / 2, 0, S - H, 2 * H)
+	slab(-(H + S) / 2, 0, S - H, 2 * H)
+
+	-- Ограждение у края ямы с проходом к первой ступени
+	for i = 0, SEGMENTS - 1 do
+		local a = (i + 0.5) / SEGMENTS * math.pi * 2
+		local deg = math.deg(a)
+		if deg > 22 and deg < 345 then
+			part(surface, {
+				Name = "Fence",
+				Size = Vector3.new(1, 3, 2 * math.pi * WALL_R / SEGMENTS + 0.6),
+				CFrame = CFrame.new(math.cos(a) * (WALL_R + 0.5), SY + 1.5, math.sin(a) * (WALL_R + 0.5)) * CFrame.Angles(0, -a, 0),
+				Color = Color3.fromRGB(110, 80, 50),
+				Material = Enum.Material.WoodPlanks,
+			})
+		end
+	end
+
+	-- Вход: табличка
+	local signPost = part(surface, {
+		Name = "EntrySign",
+		Size = Vector3.new(1, 1, 1),
+		CFrame = CFrame.new(WALL_R + 6, SY + 9, -6),
+		Transparency = 1,
+		CanCollide = false,
+	})
+	local bb = billboard(signPost, UDim2.fromOffset(520, 100), Vector3.zero, 400)
+	text(bb, { Size = UDim2.fromScale(1, 0.65), Text = "⬇ В БЕЗДНУ ⬇", TextColor3 = Color3.fromRGB(255, 220, 120) })
+	text(bb, {
+		Size = UDim2.fromScale(1, 0.35),
+		Position = UDim2.fromScale(0, 0.65),
+		Text = "Покупай ступени и спускайся глубже",
+		Font = Enum.Font.GothamBold,
+	})
+
+	-- Деревья вокруг
+	local rng = Random.new(11)
+	for _ = 1, 60 do
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = rng:NextNumber(80, 300)
+		local pos = Vector3.new(math.cos(a) * r, SY, math.sin(a) * r)
+		local h = rng:NextNumber(8, 16)
+		part(surface, { Size = Vector3.new(1.6, h, 1.6), CFrame = CFrame.new(pos + Vector3.new(0, h / 2, 0)), Color = Color3.fromRGB(100, 70, 45), Material = Enum.Material.Wood })
+		local crown = part(surface, {
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(h * 0.8, h * 0.8, h * 0.8),
+			CFrame = CFrame.new(pos + Vector3.new(0, h, 0)),
+			Color = Color3.fromRGB(60 + rng:NextInteger(0, 40), 140 + rng:NextInteger(0, 40), 60),
+			Material = Enum.Material.Grass,
+		})
+		crown.CastShadow = false
+	end
+
+	-- Алтарь званий
+	local altarPos = Vector3.new(-62, SY, 30)
+	part(surface, {
+		Name = "AltarBase",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(2, 16, 16),
+		CFrame = CFrame.new(altarPos + Vector3.new(0, 1, 0)) * A(0, 0, 90),
+		Color = Color3.fromRGB(70, 60, 90),
+		Material = Enum.Material.Marble,
+	})
+	local orb = part(surface, {
+		Name = "AltarOrb",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(5, 5, 5),
+		CFrame = CFrame.new(altarPos + Vector3.new(0, 7, 0)),
+		Color = Color3.fromRGB(200, 120, 255),
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+	})
+	local orbLight = Instance.new("PointLight")
+	orbLight.Color = Color3.fromRGB(200, 120, 255)
+	orbLight.Range = 20
+	orbLight.Brightness = 2
+	orbLight.Parent = orb
+	part(surface, {
+		Name = "AltarPillar",
+		Size = Vector3.new(3, 3, 3),
+		CFrame = CFrame.new(altarPos + Vector3.new(0, 3.5, 0)) * A(0, 45, 0),
+		Color = Color3.fromRGB(90, 80, 110),
+		Material = Enum.Material.Marble,
+	})
+	local altarBB = billboard(orb, UDim2.fromOffset(300, 70), Vector3.new(0, 5, 0), 150)
+	text(altarBB, { Size = UDim2.fromScale(1, 0.6), Text = "🎖 Алтарь званий", TextColor3 = Color3.fromRGB(230, 180, 255) })
+	text(altarBB, { Size = UDim2.fromScale(1, 0.4), Position = UDim2.fromScale(0, 0.6), Text = "Крути звания — они умножают доход", Font = Enum.Font.GothamBold })
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "RollPrompt"
+	prompt.ActionText = "Крутить звание"
+	prompt.ObjectText = "Алтарь"
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 14
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = orb
+
+	-- Табло рекордов
+	local board = part(surface, {
+		Name = "Leaderboard",
+		Size = Vector3.new(26, 22, 1),
+		CFrame = CFrame.new(62, SY + 13, 40) * A(0, -120, 0),
+		Color = Color3.fromRGB(25, 22, 35),
+	})
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Front
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	sg.PixelsPerStud = 30
+	sg.LightInfluence = 0
+	sg.Parent = board
+	text(sg, { Size = UDim2.new(1, 0, 0, 90), Text = "🏆 Глубже всех", TextColor3 = Color3.fromRGB(255, 205, 60) })
+	for i = 1, 10 do
+		leaderRows[i] = text(sg, {
+			Size = UDim2.new(1, -40, 0, 50),
+			Position = UDim2.fromOffset(20, 95 + (i - 1) * 56),
+			Text = "",
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Font = Enum.Font.GothamBold,
+		})
+	end
+	leaderRows[1].Text = "Загрузка…"
+
+	local spawnCFrame = CFrame.new(0, SY + 4, 62) * CFrame.Angles(0, 0, 0)
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "Spawn"
+	spawn.Anchored = true
+	spawn.Size = Vector3.new(10, 1, 10)
+	spawn.CFrame = CFrame.new(0, SY + 0.5, 62)
+	spawn.Color = Color3.fromRGB(255, 200, 80)
+	spawn.Material = Enum.Material.Neon
+	spawn.Duration = 0
+	spawn.TopSurface = Enum.SurfaceType.Smooth
+	spawn.Parent = surface
+
+	surface.Parent = root
+	return orb, spawnCFrame
+end
+
+function World.setLeaderboard(rows: { { name: string, value: number } })
+	for i = 1, 10 do
+		local r = rows[i]
+		if r then
+			local medal = i == 1 and "🥇" or i == 2 and "🥈" or i == 3 and "🥉" or (i .. ".")
+			local layer = Config.layerOfStep(r.value)
+			leaderRows[i].Text = string.format("%s %s — ⬇ %d (%s)", medal, r.name, r.value, Config.Layers[layer].name)
+		else
+			leaderRows[i].Text = i == 1 and "Пока пусто — стань первым!" or ""
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Стражи
+--------------------------------------------------------------------------------
+export type Boss = { layer: number, model: Model, root: BasePart, prompt: ProximityPrompt }
+
+local function buildBoss(layerInfo: Config.Layer, parent: Instance): Boss
+	local L = layerInfo.index
+	local stepN = Config.bossStep(L) + 2
+	local base = stepCFrame(stepN) * CFrame.new(0, 0.6, 0)
+	-- страж смотрит вверх по лестнице
+	local up = Config.stepPosition(stepN - 3)
+	local look = CFrame.lookAt(base.Position, Vector3.new(up.X, base.Position.Y, up.Z))
+	local c = layerInfo.bossColor
+	local model = Instance.new("Model")
+	model.Name = "Boss" .. L
+	local size = 1 + L * 0.08
+	local function bp(sz: Vector3, off: CFrame, color: Color3?, mat: Enum.Material?, shape: Enum.PartType?): Part
+		local p = part(model, {
+			Size = sz * size,
+			CFrame = look * CFrame.new(off.Position * size) * off.Rotation,
+			Color = color or c,
+			Material = mat or layerInfo.material,
+			CanCollide = false,
+		})
+		if shape then
+			p.Shape = shape
+		end
+		return p
+	end
+	local root = bp(Vector3.new(7, 7, 6), CFrame.new(0, 5.5, 0))
+	bp(Vector3.new(5, 4, 4), CFrame.new(0, 10.5, -0.5))
+	bp(Vector3.new(1.2, 1.2, 0.4), CFrame.new(-1.2, 11, -2.6), layerInfo.glow, Enum.Material.Neon)
+	bp(Vector3.new(1.2, 1.2, 0.4), CFrame.new(1.2, 11, -2.6), layerInfo.glow, Enum.Material.Neon)
+	bp(Vector3.new(2, 6, 2), CFrame.new(-5, 5, 0) * A(0, 0, -15))
+	bp(Vector3.new(2, 6, 2), CFrame.new(5, 5, 0) * A(0, 0, 15))
+	bp(Vector3.new(2.2, 3, 2.2), CFrame.new(-2, 1.5, 0))
+	bp(Vector3.new(2.2, 3, 2.2), CFrame.new(2, 1.5, 0))
+	bp(Vector3.new(1, 3, 1), CFrame.new(-1.8, 13.5, 0) * A(0, 0, 20), layerInfo.glow, Enum.Material.Neon)
+	bp(Vector3.new(1, 3, 1), CFrame.new(1.8, 13.5, 0) * A(0, 0, -20), layerInfo.glow, Enum.Material.Neon)
+	root.Name = "Root"
+	local light = Instance.new("PointLight")
+	light.Color = layerInfo.glow
+	light.Range = 24
+	light.Brightness = 2
+	light.Parent = root
+	local bb = billboard(root, UDim2.fromOffset(320, 70), Vector3.new(0, 14 * size, 0), 120)
+	text(bb, { Size = UDim2.fromScale(1, 0.6), Text = "⚔ " .. layerInfo.boss, TextColor3 = layerInfo.glow })
+	text(bb, {
+		Size = UDim2.fromScale(1, 0.4),
+		Position = UDim2.fromScale(0, 0.6),
+		Text = "Страж слоя " .. L .. " · ❤ " .. Config.format(Config.bossHP(L)),
+		Font = Enum.Font.GothamBold,
+	})
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "FightPrompt"
+	prompt.ActionText = "Сразиться"
+	prompt.ObjectText = layerInfo.boss
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 22
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = root
+	model:SetAttribute("Layer", L)
+	model.Parent = parent
+	return { layer = L, model = model, root = root, prompt = prompt }
+end
+
+--------------------------------------------------------------------------------
+-- Раскопы
+--------------------------------------------------------------------------------
+export type DigSite = { layer: number, root: BasePart, prompt: ProximityPrompt }
+
+local function buildDigSite(layerInfo: Config.Layer, parent: Instance): DigSite
+	local L = layerInfo.index
+	local n = Config.digSiteStep(L)
+	local cf = stepCFrame(n) * CFrame.new(5, 0.6, 0)
+	local model = Instance.new("Model")
+	model.Name = "Dig" .. L
+	local mound = part(model, {
+		Name = "Mound",
+		Shape = Enum.PartType.Ball,
+		Size = Vector3.new(5, 5, 5),
+		CFrame = cf * CFrame.new(0, 0.3, 0),
+		Color = layerInfo.wall,
+		Material = layerInfo.material,
+		CanCollide = false,
+	})
+	part(model, { Size = Vector3.new(0.3, 4, 0.3), CFrame = cf * CFrame.new(-1, 2.5, 1) * A(20, 0, 15), Color = Color3.fromRGB(120, 85, 50), Material = Enum.Material.Wood, CanCollide = false })
+	part(model, { Size = Vector3.new(1.2, 1.4, 0.2), CFrame = cf * CFrame.new(-1.6, 0.6, 1.5) * A(20, 0, 15), Color = Color3.fromRGB(160, 160, 170), Material = Enum.Material.Metal, CanCollide = false })
+	for i = 1, 3 do
+		part(model, {
+			Size = Vector3.new(0.6, 0.6, 0.6),
+			CFrame = cf * CFrame.new(math.cos(i * 2) * 1.6, 2.4, math.sin(i * 2) * 1.6) * A(45, i * 30, 35),
+			Color = layerInfo.glow,
+			Material = Enum.Material.Neon,
+			CanCollide = false,
+		})
+	end
+	local sparkle = Instance.new("ParticleEmitter")
+	sparkle.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	sparkle.Color = ColorSequence.new(layerInfo.glow)
+	sparkle.Size = NumberSequence.new(0.4, 0)
+	sparkle.Rate = 3
+	sparkle.Lifetime = NumberRange.new(1, 1.5)
+	sparkle.Speed = NumberRange.new(1, 2)
+	sparkle.SpreadAngle = Vector2.new(60, 60)
+	sparkle.LightEmission = 1
+	sparkle.Parent = mound
+	local bb = billboard(mound, UDim2.fromOffset(240, 50), Vector3.new(0, 4.5, 0), 70)
+	text(bb, { Size = UDim2.fromScale(1, 1), Text = "🦴 Раскоп: " .. layerInfo.name, TextColor3 = layerInfo.glow })
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "DigPrompt"
+	prompt.ActionText = "Копать"
+	prompt.ObjectText = "Раскоп"
+	prompt.HoldDuration = 0.25
+	prompt.MaxActivationDistance = 14
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = mound
+	model.Parent = parent
+	return { layer = L, root = mound, prompt = prompt }
+end
+
+--------------------------------------------------------------------------------
+-- Яма
+--------------------------------------------------------------------------------
+local function buildPit(root: Instance): ({ Boss }, { DigSite })
+	local pit = Instance.new("Folder")
+	pit.Name = "Pit"
+	local stepsFolder = Instance.new("Folder")
+	stepsFolder.Name = "Steps"
+	stepsFolder.Parent = pit
+	local bosses = {}
+	local digs = {}
+	local layerH = Config.STEPS_PER_LAYER * Config.STEP_DROP
+
+	for _, layer in ipairs(Config.Layers) do
+		local L = layer.index
+		local topY = SY - (L - 1) * layerH
+		local midY = topY - layerH / 2
+		-- Стены
+		for i = 0, SEGMENTS - 1 do
+			local a = (i + 0.5) / SEGMENTS * math.pi * 2
+			part(pit, {
+				Name = "Wall",
+				Size = Vector3.new(2, layerH + 0.2, 2 * math.pi * WALL_R / SEGMENTS + 0.8),
+				CFrame = CFrame.new(math.cos(a) * (WALL_R + 1), midY, math.sin(a) * (WALL_R + 1)) * CFrame.Angles(0, -a, 0),
+				Color = layer.wall,
+				Material = layer.material,
+			})
+		end
+		-- Центральный столб
+		part(pit, {
+			Name = "Pillar",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(layerH + 0.2, Config.PIT_INNER * 2, Config.PIT_INNER * 2),
+			CFrame = CFrame.new(0, midY, 0) * A(0, 0, 90),
+			Color = layer.wall:Lerp(Color3.new(0, 0, 0), 0.2),
+			Material = layer.material,
+		})
+		-- Светящаяся полоса на границе слоёв
+		part(pit, {
+			Name = "LayerRing",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.6, Config.PIT_INNER * 2 + 0.4, Config.PIT_INNER * 2 + 0.4),
+			CFrame = CFrame.new(0, topY - 0.5, 0) * A(0, 0, 90),
+			Color = layer.glow,
+			Material = Enum.Material.Neon,
+			CanCollide = false,
+		})
+		-- Надпись слоя на столбе
+		local first = (L - 1) * Config.STEPS_PER_LAYER + 1
+		local signPos = Config.stepPosition(first)
+		local dir = Vector3.new(signPos.X, 0, signPos.Z).Unit
+		local signAnchor = part(pit, {
+			Name = "LayerSign",
+			Size = Vector3.new(1, 1, 1),
+			CFrame = CFrame.new(dir * (Config.PIT_INNER + 0.5) + Vector3.new(0, signPos.Y + 7, 0)),
+			Transparency = 1,
+			CanCollide = false,
+		})
+		local bb = billboard(signAnchor, UDim2.fromOffset(360, 70), Vector3.zero, 90)
+		text(bb, { Size = UDim2.fromScale(1, 0.6), Text = string.format("Слой %d · %s", L, layer.name), TextColor3 = layer.glow })
+		text(bb, {
+			Size = UDim2.fromScale(1, 0.4),
+			Position = UDim2.fromScale(0, 0.6),
+			Text = string.format("ступени %d–%d", first, L * Config.STEPS_PER_LAYER),
+			Font = Enum.Font.GothamBold,
+		})
+
+		table.insert(bosses, buildBoss(layer, pit))
+		table.insert(digs, buildDigSite(layer, pit))
+	end
+
+	-- Ступени
+	for n = 1, Config.MAX_STEP do
+		local layer = Config.Layers[Config.layerOfStep(n)]
+		local isBoss = n % Config.STEPS_PER_LAYER == 0
+		local step = part(stepsFolder, {
+			Name = tostring(n),
+			Size = Vector3.new(Config.PIT_OUTER - Config.PIT_INNER + 1, 1.2, 6.4),
+			CFrame = stepCFrame(n) * CFrame.new((Config.PIT_INNER + Config.PIT_OUTER) / 2 - Config.STEP_RADIUS, 0, 0),
+			Color = isBoss and layer.glow or (n % 2 == 0 and layer.step or layer.step:Lerp(Color3.new(0, 0, 0), 0.12)),
+			Material = isBoss and Enum.Material.Neon or layer.material,
+		})
+		if n % 10 == 0 then
+			local bb = billboard(step, UDim2.fromOffset(90, 34), Vector3.new(4, 2.5, 0), 60)
+			text(bb, { Size = UDim2.fromScale(1, 1), Text = "⬇ " .. n, TextColor3 = layer.glow })
+		end
+		if n % 6 == 0 then
+			local lamp = part(stepsFolder, {
+				Name = "Lamp",
+				Size = Vector3.new(0.8, 0.8, 0.8),
+				CFrame = stepCFrame(n) * CFrame.new(Config.PIT_INNER - Config.STEP_RADIUS + 0.4, 3, 0),
+				Color = layer.glow,
+				Material = Enum.Material.Neon,
+				CanCollide = false,
+				CastShadow = false,
+			})
+			local l = Instance.new("PointLight")
+			l.Color = layer.glow
+			l.Range = 18
+			l.Brightness = 1.4
+			l.Parent = lamp
+		end
+	end
+
+	-- Площадка у входа (ступень 0, вровень с поверхностью)
+	part(stepsFolder, {
+		Name = "0",
+		Size = Vector3.new(Config.PIT_OUTER - Config.PIT_INNER + 2, 1.2, 8),
+		CFrame = stepCFrame(0),
+		Color = Color3.fromRGB(120, 85, 55),
+		Material = Enum.Material.WoodPlanks,
+	})
+
+	-- Дно
+	local bottomY = SY - Config.MAX_STEP * Config.STEP_DROP - 2
+	part(pit, {
+		Name = "Bottom",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(2, WALL_R * 2 + 4, WALL_R * 2 + 4),
+		CFrame = CFrame.new(0, bottomY, 0) * A(0, 0, 90),
+		Color = Color3.fromRGB(10, 8, 18),
+		Material = Enum.Material.Neon,
+	})
+
+	pit.Parent = root
+	return bosses, digs
+end
+
+--------------------------------------------------------------------------------
+function World.build(): { altar: BasePart, spawnCFrame: CFrame, bosses: { Boss }, digs: { DigSite } }
+	Lighting.ClockTime = 16
+	Lighting.Brightness = 2
+	Lighting.Ambient = Color3.fromRGB(60, 60, 70)
+	Lighting.OutdoorAmbient = Color3.fromRGB(110, 110, 120)
+	local bloom = Instance.new("BloomEffect")
+	bloom.Intensity = 0.5
+	bloom.Size = 24
+	bloom.Threshold = 1.6
+	bloom.Parent = Lighting
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Name = "DepthTint"
+	cc.Saturation = 0.1
+	cc.Parent = Lighting
+
+	local root = Instance.new("Folder")
+	root.Name = "Abyss"
+	local altar, spawnCFrame = buildSurface(root)
+	local bosses, digs = buildPit(root)
+	root.Parent = workspace
+	return { altar = altar, spawnCFrame = spawnCFrame, bosses = bosses, digs = digs }
+end
+
+return World
+]]></ProtectedString></Properties></Item></Item>
+</Item>
+<Item class="StarterPlayer" referent="RBX00000000000000000000000000000007"><Properties><string name="Name">StarterPlayer</string></Properties>
+<Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000008"><Properties><string name="Name">StarterPlayerScripts</string></Properties>
+<Item class="LocalScript" referent="RBX00000000000000000000000000000009"><Properties><string name="Name">GameClient</string><ProtectedString name="Source"><![CDATA[-- Клиент «В Бездну»: интерфейс, барьер на лестнице, бои, находки, освещение по слоям.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+local Lighting = game:GetService("Lighting")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local function R(name: string): RemoteEvent
+	return Remotes:WaitForChild(name) :: RemoteEvent
+end
+local BuyStepR, BuyUpR, BuyRUpR, RollR = R("BuyStep"), R("BuyUp"), R("BuyRUp"), R("Roll")
+local RebirthR, ToggleR, TeleportR, FightR, DigR = R("Rebirth"), R("Toggle"), R("Teleport"), R("Fight"), R("Dig")
+local StateR, EventR = R("State"), R("Event")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
+
+--------------------------------------------------------------------------------
+-- Состояние
+--------------------------------------------------------------------------------
+local state: Config.Data = Config.newData()
+local income = 0
+local stateTime = os.clock()
+local hasState = false
+type FightInfo = { layer: number, hp: number, maxHp: number, timeLeft: number }
+local fight: FightInfo? = nil
+
+local function coinsNow(): number
+	return state.coins + income * math.min(os.clock() - stateTime, 1.5)
+end
+
+--------------------------------------------------------------------------------
+-- Утилиты интерфейса
+--------------------------------------------------------------------------------
+local BG = Color3.fromRGB(20, 17, 26)
+local PANEL = Color3.fromRGB(32, 27, 40)
+local CARD = Color3.fromRGB(44, 37, 54)
+local CARD_DIM = Color3.fromRGB(34, 29, 42)
+local ACCENT = Color3.fromRGB(255, 190, 80)
+local GOOD = Color3.fromRGB(60, 180, 90)
+local BAD = Color3.fromRGB(75, 68, 85)
+local RED = Color3.fromRGB(230, 70, 70)
+local PURPLE = Color3.fromRGB(190, 120, 255)
+local CYAN = Color3.fromRGB(90, 210, 255)
+local MUTED = Color3.fromRGB(185, 175, 195)
+local WHITE = Color3.new(1, 1, 1)
+local DARKTEXT = Color3.fromRGB(35, 25, 10)
+
+local function new(className: string, props: { [string]: any }, children: { Instance }?): any
+	local inst = Instance.new(className)
+	for k, v in pairs(props) do
+		if k ~= "Parent" then
+			(inst :: any)[k] = v
+		end
+	end
+	if children then
+		for _, c in ipairs(children) do
+			c.Parent = inst
+		end
+	end
+	if props.Parent then
+		inst.Parent = props.Parent
+	end
+	return inst
+end
+
+local function corner(r: number?): any
+	return new("UICorner", { CornerRadius = UDim.new(0, r or 12) })
+end
+
+local function stroke(color: Color3, thickness: number?, transparency: number?): any
+	return new("UIStroke", {
+		Color = color,
+		Thickness = thickness or 2,
+		Transparency = transparency or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
+end
+
+local function label(props: { [string]: any }): TextLabel
+	if props.BackgroundTransparency == nil then
+		props.BackgroundTransparency = 1
+	end
+	props.Font = props.Font or Enum.Font.GothamBold
+	props.TextColor3 = props.TextColor3 or WHITE
+	return new("TextLabel", props)
+end
+
+local function button(props: { [string]: any }, children: { Instance }?): TextButton
+	props.Font = props.Font or Enum.Font.GothamBold
+	props.TextColor3 = props.TextColor3 or WHITE
+	props.AutoButtonColor = true
+	return new("TextButton", props, children)
+end
+
+local function playSound(id: string, volume: number, pitch: number?)
+	local s = new("Sound", { SoundId = id, Volume = volume, PlaybackSpeed = pitch or 1, Parent = SoundService })
+	s:Play()
+	task.delay(4, function()
+		s:Destroy()
+	end)
+end
+local SND_STEP = "rbxasset://sounds/action_footsteps_plastic.mp3"
+local SND_BUY = "rbxasset://sounds/button.wav"
+local SND_PING = "rbxasset://sounds/electronicpingshort.wav"
+local SND_WIN = "rbxasset://sounds/victory.wav"
+local SND_HIT = "rbxasset://sounds/swordslash.wav"
+
+local function pop(inst: GuiObject, from: number?)
+	local sc = inst:FindFirstChildOfClass("UIScale") or new("UIScale", { Parent = inst })
+	sc.Scale = from or 0.9
+	TweenService:Create(sc, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+end
+
+--------------------------------------------------------------------------------
+-- Корень
+--------------------------------------------------------------------------------
+local gui = new("ScreenGui", { Name = "AbyssUI", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui })
+local uiScale = new("UIScale", { Parent = gui })
+local function updateScale()
+	local cam = workspace.CurrentCamera
+	if cam then
+		uiScale.Scale = math.clamp(math.min(cam.ViewportSize.Y / 950, cam.ViewportSize.X / 1500), 0.55, 1.15)
+	end
+end
+updateScale()
+local cam0 = workspace.CurrentCamera
+if cam0 then
+	cam0:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
+end
+
+--------------------------------------------------------------------------------
+-- HUD
+--------------------------------------------------------------------------------
+local hud = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 8),
+	Size = UDim2.fromOffset(480, 108),
+	BackgroundColor3 = BG,
+	BackgroundTransparency = 0.12,
+	Parent = gui,
+}, { corner(18), stroke(ACCENT, 2) })
+local coinsLabel = label({
+	Size = UDim2.new(1, -20, 0, 50),
+	Position = UDim2.fromOffset(10, 4),
+	Text = "💰 0",
+	TextScaled = true,
+	Font = Enum.Font.FredokaOne,
+	TextColor3 = ACCENT,
+	Parent = hud,
+})
+local incomeLabel = label({ Size = UDim2.new(1, -20, 0, 20), Position = UDim2.fromOffset(10, 54), Text = "", TextSize = 18, Parent = hud })
+local depthLabel = label({
+	Size = UDim2.new(1, -20, 0, 18),
+	Position = UDim2.fromOffset(10, 76),
+	Text = "",
+	TextSize = 15,
+	Font = Enum.Font.Gotham,
+	TextColor3 = CYAN,
+	Parent = hud,
+})
+local titleLabel = label({
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 1, 4),
+	Size = UDim2.fromOffset(400, 22),
+	Text = "",
+	TextSize = 16,
+	Font = Enum.Font.FredokaOne,
+	TextStrokeTransparency = 0.3,
+	Parent = hud,
+})
+
+--------------------------------------------------------------------------------
+-- Нижняя панель: шаг вниз
+--------------------------------------------------------------------------------
+local bottom = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -16),
+	Size = UDim2.fromOffset(440, 80),
+	BackgroundTransparency = 1,
+	Parent = gui,
+})
+local stepButton = button({
+	Size = UDim2.new(1, -110, 1, 0),
+	BackgroundColor3 = BAD,
+	Text = "",
+	Parent = bottom,
+}, { corner(18), stroke(WHITE, 3) })
+local stepTitle = label({
+	Size = UDim2.new(1, 0, 0, 40),
+	Position = UDim2.fromOffset(0, 6),
+	Text = "⬇ ШАГ ВНИЗ",
+	TextSize = 28,
+	Font = Enum.Font.FredokaOne,
+	Parent = stepButton,
+})
+local stepCostLabel = label({ Size = UDim2.new(1, 0, 0, 24), Position = UDim2.fromOffset(0, 46), Text = "", TextSize = 18, Parent = stepButton })
+local maxButton = button({
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.fromScale(1, 0),
+	Size = UDim2.new(0, 100, 1, 0),
+	BackgroundColor3 = PANEL,
+	Text = "МАКС",
+	TextSize = 20,
+	Font = Enum.Font.FredokaOne,
+	Parent = bottom,
+}, { corner(18), stroke(ACCENT, 2) })
+
+-- Блок стража (появляется вместо шага)
+local bossRow = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -104),
+	Size = UDim2.fromOffset(440, 46),
+	BackgroundTransparency = 1,
+	Visible = false,
+	Parent = gui,
+}, { new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8), HorizontalAlignment = Enum.HorizontalAlignment.Center }) })
+local fightButton = button({ Size = UDim2.fromOffset(250, 46), BackgroundColor3 = RED, Text = "⚔ Сразиться", TextSize = 18, Font = Enum.Font.FredokaOne, Parent = bossRow }, { corner(12) })
+local toBossButton = button({ Size = UDim2.fromOffset(170, 46), BackgroundColor3 = PANEL, Text = "🏃 К стражу", TextSize = 16, Parent = bossRow }, { corner(12), stroke(RED, 2) })
+local bossHint = label({
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -154),
+	Size = UDim2.fromOffset(520, 22),
+	Text = "",
+	TextSize = 15,
+	TextStrokeTransparency = 0.3,
+	Visible = false,
+	Parent = gui,
+})
+
+--------------------------------------------------------------------------------
+-- Боковые кнопки
+--------------------------------------------------------------------------------
+local leftBar = new("Frame", {
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 10, 0.5, 0),
+	Size = UDim2.fromOffset(70, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1,
+	Parent = gui,
+}, { new("UIListLayout", { Padding = UDim.new(0, 8) }) })
+
+local function sideButton(icon: string, caption: string, color: Color3?): TextButton
+	local b = button({ Size = UDim2.fromOffset(70, 66), BackgroundColor3 = PANEL, Text = "", Parent = leftBar }, { corner(14), stroke(color or ACCENT, 1.5, 0.3) })
+	label({ Size = UDim2.new(1, 0, 0, 38), Position = UDim2.fromOffset(0, 4), Text = icon, TextSize = 28, Parent = b })
+	label({ Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 44), Text = caption, TextSize = 11, TextColor3 = MUTED, Parent = b })
+	return b
+end
+local edgeButton = sideButton("🏃", "К краю")
+local upButton = sideButton("⬆", "Наверх")
+local digButton = sideButton("🦴", "Копать", CYAN)
+local rollButton = sideButton("🎲", "Звание", PURPLE)
+local menuButton = sideButton("📜", "Меню")
+
+--------------------------------------------------------------------------------
+-- Правая панель с вкладками
+--------------------------------------------------------------------------------
+local panel = new("Frame", {
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -10, 0.5, 0),
+	Size = UDim2.fromOffset(400, 640),
+	BackgroundColor3 = BG,
+	BackgroundTransparency = 0.08,
+	Parent = gui,
+}, { corner(18), stroke(ACCENT, 2) })
+local tabsBar = new("Frame", { Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -16, 0, 44), BackgroundTransparency = 1, Parent = panel }, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }),
+})
+local content = new("Frame", { Position = UDim2.fromOffset(8, 58), Size = UDim2.new(1, -16, 1, -66), BackgroundTransparency = 1, ClipsDescendants = true, Parent = panel })
+
+type Tab = { button: TextButton, page: Frame, badge: TextLabel }
+local tabs: { [string]: Tab } = {}
+local currentTab = "ups"
+local function selectTab(id: string)
+	currentTab = id
+	for tid, t in pairs(tabs) do
+		local on = tid == id
+		t.page.Visible = on
+		t.button.BackgroundColor3 = on and ACCENT or PANEL
+		t.button.TextColor3 = on and DARKTEXT or WHITE
+	end
+end
+local function addTab(id: string, title: string): Frame
+	local b = button({ Size = UDim2.new(0.25, -5, 1, 0), BackgroundColor3 = PANEL, Text = title, TextSize = 14, Parent = tabsBar }, { corner(10) })
+	local badge = label({
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 4, 0, -6),
+		Size = UDim2.fromOffset(20, 20),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = RED,
+		Text = "!",
+		TextSize = 13,
+		Visible = false,
+		ZIndex = 3,
+		Parent = b,
+	})
+	corner(10).Parent = badge
+	local page = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = content })
+	tabs[id] = { button = b, page = page, badge = badge }
+	b.Activated:Connect(function()
+		selectTab(id)
+		playSound(SND_BUY, 0.2, 1.4)
+	end)
+	return page
+end
+local function scroller(parent: Instance, top: number): ScrollingFrame
+	return new("ScrollingFrame", {
+		Position = UDim2.fromOffset(0, top),
+		Size = UDim2.new(1, 0, 1, -top),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 6,
+		ScrollBarImageColor3 = ACCENT,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Parent = parent,
+	}, {
+		new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+		new("UIPadding", { PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2) }),
+	})
+end
+local function sectionHeader(parent: Instance, text: string, order: number, color: Color3)
+	label({ Size = UDim2.new(1, 0, 0, 26), Text = text, TextSize = 17, Font = Enum.Font.FredokaOne, TextColor3 = color, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = order, Parent = parent })
+end
+
+--------------------------------------------------------------------------------
+-- Вкладка «Улучшения»
+--------------------------------------------------------------------------------
+local upsPage = addTab("ups", "⬆ Улучш.")
+local upsList = scroller(upsPage, 0)
+type UpCard = { u: Config.Upgrade, frame: Frame, lvl: TextLabel, buy: TextButton, lock: TextLabel }
+local upCards: { UpCard } = {}
+local TREES = { { "coins", "💰 Монеты", ACCENT }, { "luck", "🍀 Удача", GOOD }, { "power", "⚔ Сила", RED } }
+local order = 0
+for _, tree in ipairs(TREES) do
+	order += 1
+	sectionHeader(upsList, tree[2], order, tree[3])
+	for _, u in ipairs(Config.Upgrades) do
+		if u.tree == tree[1] then
+			order += 1
+			local frame = new("Frame", { Size = UDim2.new(1, 0, 0, 66), BackgroundColor3 = CARD, LayoutOrder = order, Parent = upsList }, { corner(12) })
+			new("Frame", { Size = UDim2.fromOffset(5, 46), Position = UDim2.fromOffset(8, 10), BackgroundColor3 = tree[3], Parent = frame }, { corner(3) })
+			label({ Position = UDim2.fromOffset(20, 6), Size = UDim2.new(1, -150, 0, 22), Text = u.name, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left, Parent = frame })
+			label({
+				Position = UDim2.fromOffset(20, 28),
+				Size = UDim2.new(1, -150, 0, 18),
+				Text = u.desc,
+				TextSize = 12,
+				TextWrapped = true,
+				Font = Enum.Font.Gotham,
+				TextColor3 = MUTED,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Parent = frame,
+			})
+			local lvl = label({ Position = UDim2.fromOffset(20, 46), Size = UDim2.new(1, -150, 0, 14), Text = "", TextSize = 11, Font = Enum.Font.Gotham, TextColor3 = tree[3], TextXAlignment = Enum.TextXAlignment.Left, Parent = frame })
+			local buy = button({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(116, 46), BackgroundColor3 = BAD, Text = "", TextSize = 15, Parent = frame }, { corner(10) })
+			local lock = label({
+				Size = UDim2.fromScale(1, 1),
+				BackgroundTransparency = 0.25,
+				BackgroundColor3 = Color3.new(0, 0, 0),
+				Text = string.format("🔒 Победи %d страж%s", u.needBoss, u.needBoss == 1 and "а" or "ей"),
+				TextSize = 15,
+				ZIndex = 3,
+				Visible = false,
+				Parent = frame,
+			})
+			corner(12).Parent = lock
+			buy.Activated:Connect(function()
+				BuyUpR:FireServer(u.id, 1)
+				pop(buy, 0.9)
+			end)
+			table.insert(upCards, { u = u, frame = frame, lvl = lvl, buy = buy, lock = lock })
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Вкладка «Коллекция»
+--------------------------------------------------------------------------------
+local colPage = addTab("col", "🦴 Находки")
+local colList = scroller(colPage, 0)
+local colSummary = label({
+	Size = UDim2.new(1, 0, 0, 54),
+	Text = "",
+	TextSize = 14,
+	TextWrapped = true,
+	Font = Enum.Font.Gotham,
+	TextColor3 = MUTED,
+	LayoutOrder = 0,
+	Parent = colList,
+})
+type RelicCell = { relic: Config.Relic, frame: Frame, name: TextLabel, info: TextLabel }
+local relicCells: { RelicCell } = {}
+local layerHeaders: { [number]: TextLabel } = {}
+for L, layer in ipairs(Config.Layers) do
+	local header = label({
+		Size = UDim2.new(1, 0, 0, 24),
+		Text = string.format("Слой %d · %s", L, layer.name),
+		TextSize = 15,
+		Font = Enum.Font.FredokaOne,
+		TextColor3 = layer.glow,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		LayoutOrder = L * 2 - 1,
+		Parent = colList,
+	})
+	layerHeaders[L] = header
+	local grid = new("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = L * 2, Parent = colList }, {
+		new("UIGridLayout", { CellSize = UDim2.new(0.5, -4, 0, 50), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	for i, relic in ipairs(Config.RelicsByLayer[L]) do
+		local frame = new("Frame", { BackgroundColor3 = CARD_DIM, LayoutOrder = i, Parent = grid }, { corner(10), stroke(relic.rarity.color, 1.5, 0.6) })
+		local name = label({ Position = UDim2.fromOffset(8, 4), Size = UDim2.new(1, -16, 0, 20), Text = "???", TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, TextColor3 = MUTED, Parent = frame })
+		local info = label({ Position = UDim2.fromOffset(8, 24), Size = UDim2.new(1, -16, 0, 22), Text = relic.rarity.name, TextSize = 11, TextWrapped = true, Font = Enum.Font.Gotham, TextColor3 = relic.rarity.color, TextXAlignment = Enum.TextXAlignment.Left, Parent = frame })
+		table.insert(relicCells, { relic = relic, frame = frame, name = name, info = info })
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Вкладка «Звания»
+--------------------------------------------------------------------------------
+local titlePage = addTab("titles", "🎖 Звания")
+local titleList = scroller(titlePage, 0)
+local titleHeader = new("Frame", { Size = UDim2.new(1, 0, 0, 120), BackgroundColor3 = CARD, LayoutOrder = 0, Parent = titleList }, { corner(12), stroke(PURPLE, 1.5, 0.3) })
+local titleCurrent = label({ Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 0, 28), Text = "", TextSize = 20, Font = Enum.Font.FredokaOne, TextXAlignment = Enum.TextXAlignment.Left, Parent = titleHeader })
+local titleInfo = label({ Position = UDim2.fromOffset(12, 36), Size = UDim2.new(1, -24, 0, 20), Text = "", TextSize = 13, Font = Enum.Font.Gotham, TextColor3 = MUTED, TextXAlignment = Enum.TextXAlignment.Left, Parent = titleHeader })
+local rollBig = button({ Position = UDim2.fromOffset(12, 62), Size = UDim2.new(1, -24, 0, 48), BackgroundColor3 = PURPLE, Text = "🎲 Крутить", TextSize = 18, Font = Enum.Font.FredokaOne, Parent = titleHeader }, { corner(12) })
+rollBig.Activated:Connect(function()
+	RollR:FireServer()
+	pop(rollBig, 0.9)
+end)
+type TitleRow = { t: Config.Title, frame: Frame, owned: TextLabel }
+local titleRows: { TitleRow } = {}
+for i, t in ipairs(Config.Titles) do
+	local frame = new("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = CARD_DIM, LayoutOrder = i, Parent = titleList }, { corner(10) })
+	label({ Position = UDim2.fromOffset(10, 0), Size = UDim2.new(0.5, 0, 1, 0), Text = t.name, TextSize = 15, TextColor3 = t.color, TextXAlignment = Enum.TextXAlignment.Left, Parent = frame })
+	label({ Position = UDim2.new(0.5, 0, 0, 0), Size = UDim2.new(0.22, 0, 1, 0), Text = Config.formatChance(t.chance), TextSize = 13, Font = Enum.Font.Gotham, TextColor3 = MUTED, Parent = frame })
+	local owned = label({ Position = UDim2.new(0.72, 0, 0, 0), Size = UDim2.new(0.28, -8, 1, 0), Text = "×" .. tostring(t.mult), TextSize = 14, TextXAlignment = Enum.TextXAlignment.Right, Parent = frame })
+	table.insert(titleRows, { t = t, frame = frame, owned = owned })
+end
+
+--------------------------------------------------------------------------------
+-- Вкладка «Перерождение»
+--------------------------------------------------------------------------------
+local rebPage = addTab("reb", "🔁 Перерожд.")
+local rebList = scroller(rebPage, 0)
+local rebHeader = new("Frame", { Size = UDim2.new(1, 0, 0, 236), BackgroundColor3 = CARD, LayoutOrder = 0, Parent = rebList }, { corner(12), stroke(CYAN, 1.5, 0.3) })
+local tokensLabel = label({ Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 0, 30), Text = "", TextSize = 21, Font = Enum.Font.FredokaOne, TextColor3 = CYAN, TextXAlignment = Enum.TextXAlignment.Left, Parent = rebHeader })
+local rebInfo = label({
+	Position = UDim2.fromOffset(12, 40),
+	Size = UDim2.new(1, -24, 0, 70),
+	Text = "",
+	TextSize = 13,
+	TextWrapped = true,
+	Font = Enum.Font.Gotham,
+	TextColor3 = MUTED,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Parent = rebHeader,
+})
+local rebButton = button({ Position = UDim2.fromOffset(12, 114), Size = UDim2.new(1, -24, 0, 48), BackgroundColor3 = BAD, Text = "", TextSize = 18, Font = Enum.Font.FredokaOne, Parent = rebHeader }, { corner(12) })
+local autoStepToggle = button({ Position = UDim2.fromOffset(12, 168), Size = UDim2.new(1, -24, 0, 28), BackgroundColor3 = PANEL, Text = "", TextSize = 13, Visible = false, Parent = rebHeader }, { corner(8) })
+local autoDigToggle = button({ Position = UDim2.fromOffset(12, 200), Size = UDim2.new(1, -24, 0, 28), BackgroundColor3 = PANEL, Text = "", TextSize = 13, Visible = false, Parent = rebHeader }, { corner(8) })
+autoStepToggle.Activated:Connect(function()
+	ToggleR:FireServer("autoStep")
+end)
+autoDigToggle.Activated:Connect(function()
+	ToggleR:FireServer("autoDig")
+end)
+local confirmUntil = 0
+rebButton.Activated:Connect(function()
+	if Config.tokensOnRebirth(state) < 1 then
+		return
+	end
+	if os.clock() < confirmUntil then
+		confirmUntil = 0
+		RebirthR:FireServer()
+	else
+		confirmUntil = os.clock() + 3
+		rebButton.Text = "Точно? Нажми ещё раз"
+		pop(rebButton, 0.9)
+	end
+end)
+type RCard = { r: Config.RebirthUp, lvl: TextLabel, buy: TextButton }
+local rCards: { RCard } = {}
+for i, r in ipairs(Config.RebirthUps) do
+	local frame = new("Frame", { Size = UDim2.new(1, 0, 0, 70), BackgroundColor3 = CARD, LayoutOrder = i, Parent = rebList }, { corner(12) })
+	label({ Position = UDim2.fromOffset(12, 6), Size = UDim2.new(1, -140, 0, 22), Text = "💠 " .. r.name, TextSize = 15, TextXAlignment = Enum.TextXAlignment.Left, Parent = frame })
+	label({
+		Position = UDim2.fromOffset(12, 28),
+		Size = UDim2.new(1, -140, 0, 26),
+		Text = r.desc,
+		TextSize = 12,
+		TextWrapped = true,
+		Font = Enum.Font.Gotham,
+		TextColor3 = MUTED,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Parent = frame,
+	})
+	local lvl = label({ Position = UDim2.fromOffset(12, 52), Size = UDim2.new(1, -140, 0, 14), Text = "", TextSize = 11, Font = Enum.Font.Gotham, TextColor3 = CYAN, TextXAlignment = Enum.TextXAlignment.Left, Parent = frame })
+	local buy = button({ AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(112, 46), BackgroundColor3 = BAD, Text = "", TextSize = 15, Parent = frame }, { corner(10) })
+	buy.Activated:Connect(function()
+		BuyRUpR:FireServer(r.id)
+		pop(buy, 0.9)
+	end)
+	table.insert(rCards, { r = r, lvl = lvl, buy = buy })
+end
+
+selectTab("ups")
+
+--------------------------------------------------------------------------------
+-- Бой: полоса здоровья стража
+--------------------------------------------------------------------------------
+local fightFrame = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 148),
+	Size = UDim2.fromOffset(480, 64),
+	BackgroundColor3 = BG,
+	BackgroundTransparency = 0.1,
+	Visible = false,
+	Parent = gui,
+}, { corner(14), stroke(RED, 2) })
+local fightName = label({ Position = UDim2.fromOffset(12, 4), Size = UDim2.new(1, -24, 0, 22), Text = "", TextSize = 17, Font = Enum.Font.FredokaOne, TextColor3 = RED, Parent = fightFrame })
+local hpBg = new("Frame", { Position = UDim2.fromOffset(12, 30), Size = UDim2.new(1, -24, 0, 24), BackgroundColor3 = Color3.fromRGB(40, 15, 15), Parent = fightFrame }, { corner(8) })
+local hpFill = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = RED, Parent = hpBg }, { corner(8) })
+local hpText = label({ Size = UDim2.fromScale(1, 1), Text = "", TextSize = 14, ZIndex = 2, Parent = hpBg })
+
+--------------------------------------------------------------------------------
+-- Сообщения и окна
+--------------------------------------------------------------------------------
+local toastHolder = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 222),
+	Size = UDim2.fromOffset(520, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1,
+	Parent = gui,
+}, { new("UIListLayout", { Padding = UDim.new(0, 6), HorizontalAlignment = Enum.HorizontalAlignment.Center }) })
+
+local function toast(text: string, color: Color3?)
+	local t = label({
+		Size = UDim2.fromOffset(0, 38),
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 0.15,
+		BackgroundColor3 = BG,
+		Text = "  " .. text .. "  ",
+		TextSize = 18,
+		Font = Enum.Font.FredokaOne,
+		TextColor3 = color or ACCENT,
+		Parent = toastHolder,
+	})
+	corner(12).Parent = t
+	stroke(color or ACCENT, 1.5, 0.3).Parent = t
+	pop(t, 0.7)
+	task.delay(3.5, function()
+		local info = TweenInfo.new(0.5)
+		TweenService:Create(t, info, { TextTransparency = 1, BackgroundTransparency = 1 }):Play()
+		local st = t:FindFirstChildOfClass("UIStroke")
+		if st then
+			TweenService:Create(st, info, { Transparency = 1 }):Play()
+		end
+		task.wait(0.5)
+		t:Destroy()
+	end)
+	local labels = {}
+	for _, c in ipairs(toastHolder:GetChildren()) do
+		if c:IsA("TextLabel") then
+			table.insert(labels, c)
+		end
+	end
+	if #labels > 5 then
+		labels[1]:Destroy()
+	end
+end
+
+local function modal(title: string, body: string, buttonText: string, color: Color3?)
+	local shade = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45, ZIndex = 50, Parent = gui })
+	local box = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(480, 300),
+		BackgroundColor3 = BG,
+		ZIndex = 51,
+		Parent = shade,
+	}, { corner(20), stroke(color or ACCENT, 3) })
+	label({ Position = UDim2.fromOffset(20, 16), Size = UDim2.new(1, -40, 0, 40), Text = title, TextSize = 28, Font = Enum.Font.FredokaOne, TextColor3 = color or ACCENT, ZIndex = 52, Parent = box })
+	label({ Position = UDim2.fromOffset(24, 64), Size = UDim2.new(1, -48, 0, 150), Text = body, TextSize = 17, TextWrapped = true, Font = Enum.Font.Gotham, ZIndex = 52, Parent = box })
+	local ok = button({
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -18),
+		Size = UDim2.fromOffset(220, 52),
+		BackgroundColor3 = GOOD,
+		Text = buttonText,
+		TextSize = 20,
+		Font = Enum.Font.FredokaOne,
+		ZIndex = 52,
+		Parent = box,
+	}, { corner(14) })
+	pop(box, 0.6)
+	ok.Activated:Connect(function()
+		shade:Destroy()
+	end)
+end
+
+-- Карточка находки
+local relicQueue = 0
+local function showRelic(relic: Config.Relic, shiny: boolean, isNew: boolean)
+	relicQueue += 1
+	local slot = relicQueue
+	local color = relic.rarity.color
+	local card = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.45),
+		Size = UDim2.fromOffset(320, 150),
+		BackgroundColor3 = BG,
+		ZIndex = 30,
+		Parent = gui,
+	}, { corner(18), stroke(shiny and WHITE or color, shiny and 4 or 3) })
+	label({ Position = UDim2.fromOffset(10, 8), Size = UDim2.new(1, -20, 0, 22), Text = isNew and "✨ НОВАЯ НАХОДКА ✨" or "Находка", TextSize = 15, TextColor3 = MUTED, ZIndex = 31, Parent = card })
+	label({ Position = UDim2.fromOffset(10, 34), Size = UDim2.new(1, -20, 0, 40), Text = (shiny and "🌟 " or "🦴 ") .. relic.name, TextScaled = true, Font = Enum.Font.FredokaOne, TextColor3 = color, ZIndex = 31, Parent = card })
+	label({
+		Position = UDim2.fromOffset(10, 78),
+		Size = UDim2.new(1, -20, 0, 22),
+		Text = relic.rarity.name .. (shiny and " · СИЯЮЩАЯ ×" .. Config.SHINY_MULT or ""),
+		TextSize = 16,
+		TextColor3 = shiny and Color3.fromRGB(255, 255, 180) or color,
+		ZIndex = 31,
+		Parent = card,
+	})
+	local entry = state.relics[relic.id]
+	local bonus = entry and Config.relicBonus(relic, entry) or 0
+	label({ Position = UDim2.fromOffset(10, 106), Size = UDim2.new(1, -20, 0, 30), Text = string.format("Бонус к доходу: +%d%%", math.floor(bonus * 100 + 0.5)), TextSize = 14, Font = Enum.Font.Gotham, ZIndex = 31, Parent = card })
+	pop(card, 0.4)
+	if relic.rarityIndex >= 4 or shiny then
+		playSound(SND_WIN, 0.6, shiny and 1.3 or 1)
+	else
+		playSound(SND_PING, 0.4, 1.2)
+	end
+	task.delay(isNew and 2.2 or 1.3, function()
+		TweenService:Create(card, TweenInfo.new(0.3), { Position = UDim2.fromScale(0.5, 0.3), BackgroundTransparency = 1 }):Play()
+		for _, d in ipairs(card:GetDescendants()) do
+			if d:IsA("TextLabel") then
+				TweenService:Create(d, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+			elseif d:IsA("UIStroke") then
+				TweenService:Create(d, TweenInfo.new(0.3), { Transparency = 1 }):Play()
+			end
+		end
+		task.wait(0.35)
+		card:Destroy()
+		if relicQueue == slot then
+			relicQueue = 0
+		end
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- Личный барьер на лестнице (виден и непроходим только для тебя)
+--------------------------------------------------------------------------------
+local barrier = new("Part", {
+	Name = "MyBarrier",
+	Anchored = true,
+	CanCollide = true,
+	CastShadow = false,
+	Material = Enum.Material.ForceField,
+	Color = ACCENT,
+	Transparency = 0.2,
+	Size = Vector3.new(Config.PIT_OUTER - Config.PIT_INNER + 2, 14, 0.6),
+})
+local barrierBB = new("BillboardGui", { Size = UDim2.fromOffset(240, 44), StudsOffsetWorldSpace = Vector3.new(0, 2, 0), AlwaysOnTop = false, LightInfluence = 0, MaxDistance = 60, Adornee = barrier, Parent = barrier })
+local barrierText = label({ Size = UDim2.fromScale(1, 1), Text = "", TextScaled = true, Font = Enum.Font.FredokaOne, TextStrokeTransparency = 0.2, Parent = barrierBB })
+local barrierStep = -1
+local function placeBarrier()
+	local s = state.step
+	if s >= Config.MAX_STEP then
+		barrier.Parent = nil
+		return
+	end
+	if s == barrierStep and barrier.Parent then
+		return
+	end
+	barrierStep = s
+	local a = (Config.stepAngle(s) + Config.stepAngle(s + 1)) / 2
+	local y = Config.stepPosition(s).Y + 6
+	barrier.CFrame = CFrame.new(math.cos(a) * Config.STEP_RADIUS, y, math.sin(a) * Config.STEP_RADIUS) * CFrame.Angles(0, -a, 0)
+	barrier.Parent = workspace
+end
+
+--------------------------------------------------------------------------------
+-- Освещение по глубине
+--------------------------------------------------------------------------------
+local tint = Lighting:WaitForChild("DepthTint", 10) :: ColorCorrectionEffect?
+local surfaceAmbient = Lighting.Ambient
+local surfaceOutdoor = Lighting.OutdoorAmbient
+local surfaceBrightness = Lighting.Brightness
+local currentLayerShown = 0
+RunService.RenderStepped:Connect(function()
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local y = cam.CFrame.Position.Y
+	local depth = (Config.SURFACE_Y - y) / Config.STEP_DROP
+	local inPit = depth > 3 and Vector3.new(cam.CFrame.Position.X, 0, cam.CFrame.Position.Z).Magnitude < 40
+	local layer = inPit and Config.layerOfStep(math.max(1, math.floor(depth))) or 0
+	if layer ~= currentLayerShown then
+		currentLayerShown = layer
+		local info = TweenInfo.new(1.2)
+		if layer == 0 then
+			TweenService:Create(Lighting, info, { Ambient = surfaceAmbient, OutdoorAmbient = surfaceOutdoor, Brightness = surfaceBrightness }):Play()
+			if tint then
+				TweenService:Create(tint, info, { TintColor = WHITE, Brightness = 0 }):Play()
+			end
+		else
+			local L = Config.Layers[layer]
+			local dark = math.clamp(layer / #Config.Layers, 0, 1)
+			TweenService:Create(Lighting, info, {
+				Ambient = L.glow:Lerp(Color3.new(0, 0, 0), 0.55 + dark * 0.3),
+				OutdoorAmbient = L.wall:Lerp(Color3.new(0, 0, 0), 0.4 + dark * 0.4),
+				Brightness = math.max(0.3, 1.4 - dark),
+			}):Play()
+			if tint then
+				TweenService:Create(tint, info, { TintColor = WHITE:Lerp(L.glow, 0.25), Brightness = -0.03 * layer }):Play()
+			end
+		end
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Кнопки
+--------------------------------------------------------------------------------
+stepButton.Activated:Connect(function()
+	BuyStepR:FireServer(1)
+	pop(stepButton, 0.94)
+end)
+maxButton.Activated:Connect(function()
+	BuyStepR:FireServer("max")
+	pop(maxButton, 0.9)
+end)
+fightButton.Activated:Connect(function()
+	FightR:FireServer()
+end)
+toBossButton.Activated:Connect(function()
+	TeleportR:FireServer("boss")
+end)
+edgeButton.Activated:Connect(function()
+	TeleportR:FireServer("edge")
+end)
+upButton.Activated:Connect(function()
+	TeleportR:FireServer("surface")
+end)
+digButton.Activated:Connect(function()
+	DigR:FireServer()
+	pop(digButton, 0.9)
+end)
+rollButton.Activated:Connect(function()
+	RollR:FireServer()
+	pop(rollButton, 0.9)
+end)
+menuButton.Activated:Connect(function()
+	panel.Visible = not panel.Visible
+	if panel.Visible then
+		pop(panel, 0.95)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Обновление интерфейса
+--------------------------------------------------------------------------------
+local function updateUI()
+	if not hasState then
+		return
+	end
+	local coins = coinsNow()
+	local d = state
+	coinsLabel.Text = "💰 " .. Config.format(coins)
+	incomeLabel.Text = string.format("+%s/с   ·   🍀 удача ×%s", Config.format(income), Config.format(Config.luck(d)))
+	local layer = Config.Layers[Config.layerOfStep(math.max(d.step, 1))]
+	depthLabel.Text = string.format("⬇ Ступень %d / %d  ·  %s  ·  бонус глубины ×%s", d.step, Config.MAX_STEP, d.step > 0 and layer.name or "поверхность", Config.format(Config.depthMult(d)))
+	local title = d.title and Config.TitleById[d.title]
+	if title then
+		titleLabel.Text = string.format("🎖 %s  (доход ×%s)", title.name, tostring(title.mult))
+		titleLabel.TextColor3 = title.color
+	else
+		titleLabel.Text = "🎖 Без звания — крути на алтаре или кнопкой 🎲"
+		titleLabel.TextColor3 = MUTED
+	end
+
+	-- Шаг / страж
+	local canStep, why = Config.canBuyStep(d)
+	local nextLayer = d.bosses + 1
+	local atBoss = not canStep and d.step < Config.MAX_STEP and nextLayer <= #Config.Layers
+	if canStep then
+		local cost = Config.stepCost(d, d.step + 1)
+		stepTitle.Text = "⬇ ШАГ ВНИЗ"
+		stepCostLabel.Text = "💰 " .. Config.format(cost)
+		stepButton.BackgroundColor3 = coins >= cost and GOOD or BAD
+	elseif atBoss then
+		stepTitle.Text = "⚔ СТРАЖ"
+		stepCostLabel.Text = Config.Layers[nextLayer].boss
+		stepButton.BackgroundColor3 = RED
+	else
+		stepTitle.Text = "🏁 ДНО"
+		stepCostLabel.Text = why or ""
+		stepButton.BackgroundColor3 = ACCENT
+	end
+	bossRow.Visible = atBoss and fight == nil
+	bossHint.Visible = atBoss and fight == nil
+	if atBoss then
+		local hp = Config.bossHP(nextLayer)
+		local total = Config.damagePerSec(d) * Config.fightDuration(d)
+		local pct = math.floor(math.min(total / hp, 9.99) * 100)
+		bossHint.Text = string.format(
+			"Твой урон за бой ≈ %s из ❤ %s (%d%%)%s",
+			Config.format(total),
+			Config.format(hp),
+			pct,
+			pct < 100 and " — качай «Силу»" or " — можно побеждать!"
+		)
+		bossHint.TextColor3 = pct < 100 and Color3.fromRGB(255, 160, 140) or Color3.fromRGB(150, 255, 160)
+		fightButton.Text = string.format("⚔ Сразиться: %s", Config.Layers[nextLayer].boss)
+	end
+
+	-- Барьер
+	placeBarrier()
+	if canStep then
+		barrierText.Text = "💰 " .. Config.format(Config.stepCost(d, d.step + 1))
+		barrierText.TextColor3 = ACCENT
+		barrier.Color = ACCENT
+	elseif atBoss then
+		barrierText.Text = "⚔ Победи стража"
+		barrierText.TextColor3 = RED
+		barrier.Color = RED
+	end
+
+	-- Бой
+	local f = fight
+	fightFrame.Visible = f ~= nil
+	if f then
+		fightName.Text = string.format("⚔ %s — %d с", Config.Layers[f.layer].boss, math.ceil(f.timeLeft))
+		hpFill.Size = UDim2.fromScale(math.clamp(f.hp / f.maxHp, 0, 1), 1)
+		hpText.Text = "❤ " .. Config.format(math.max(0, f.hp)) .. " / " .. Config.format(f.maxHp)
+	end
+
+	-- Улучшения
+	local anyUp = false
+	for _, card in ipairs(upCards) do
+		local u = card.u
+		local lvl = Config.lvl(d, u.id)
+		local locked = d.bosses < u.needBoss
+		card.lock.Visible = locked
+		card.lvl.Text = string.format("Уровень %d/%d", lvl, u.maxLevel)
+		if lvl >= u.maxLevel then
+			card.buy.Text = "МАКС"
+			card.buy.BackgroundColor3 = ACCENT
+			card.buy.TextColor3 = DARKTEXT
+		else
+			local cost = Config.upCost(u, lvl)
+			card.buy.Text = "💰 " .. Config.format(cost)
+			local can = not locked and coins >= cost
+			card.buy.BackgroundColor3 = can and GOOD or BAD
+			card.buy.TextColor3 = WHITE
+			anyUp = anyUp or can
+		end
+	end
+	tabs.ups.badge.Visible = anyUp and currentTab ~= "ups"
+
+	-- Коллекция
+	local found = 0
+	for _, cell in ipairs(relicCells) do
+		local e = d.relics[cell.relic.id]
+		if e and e.n > 0 then
+			found += 1
+			cell.name.Text = (e.s > 0 and "🌟 " or "") .. cell.relic.name
+			cell.name.TextColor3 = cell.relic.rarity.color
+			cell.info.Text = string.format("×%d%s · +%d%%", e.n, e.s > 0 and (" (сияющих " .. e.s .. ")") or "", math.floor(Config.relicBonus(cell.relic, e) * 100 + 0.5))
+			cell.frame.BackgroundColor3 = CARD
+		else
+			cell.name.Text = "???"
+			cell.name.TextColor3 = MUTED
+			cell.info.Text = cell.relic.rarity.name
+			cell.frame.BackgroundColor3 = CARD_DIM
+		end
+	end
+	colSummary.Text = string.format(
+		"Найдено %d из %d. Все находки вместе: доход ×%s.\nРаскоп каждого слоя — на его 25-й ступени (кнопка 🦴 копает на самом глубоком). Находки сохраняются после перерождения.",
+		found,
+		#Config.Relics,
+		Config.format(Config.relicMult(d))
+	)
+
+	-- Звания
+	local rollCost = Config.titleRollCost(d)
+	titleCurrent.Text = title and ("🎖 " .. title.name .. "  ×" .. tostring(title.mult)) or "🎖 Без звания"
+	titleCurrent.TextColor3 = title and title.color or MUTED
+	titleInfo.Text = string.format("Бросков: %d · удача ×%s делит знаменатель шанса", d.rolls, Config.format(Config.luck(d)))
+	rollBig.Text = "🎲 Крутить — 💰 " .. Config.format(rollCost)
+	rollBig.BackgroundColor3 = coins >= rollCost and PURPLE or BAD
+	for _, row in ipairs(titleRows) do
+		local n = d.titles[row.t.id] or 0
+		row.frame.BackgroundColor3 = n > 0 and CARD or CARD_DIM
+		row.owned.Text = (n > 0 and ("✓" .. n .. "  ") or "") .. "×" .. tostring(row.t.mult)
+		row.owned.TextColor3 = n > 0 and row.t.color or MUTED
+	end
+
+	-- Перерождение
+	local gain = Config.tokensOnRebirth(d)
+	tokensLabel.Text = string.format("💠 %d осколков", d.tokens)
+	rebInfo.Text = string.format(
+		"Получено всего: %d → доход +%d%% навсегда.\nПерерождение открывается после %d-го стража. Сбрасывает монеты, ступени, стражей и улучшения. Находки, звания и осколки остаются.",
+		d.tokensEver,
+		math.floor(d.tokensEver * Config.TOKEN_BONUS * 100 + 0.5),
+		Config.REBIRTH_NEED_BOSSES
+	)
+	if os.clock() >= confirmUntil then
+		if gain >= 1 then
+			rebButton.Text = string.format("🔁 Переродиться: +%d 💠", gain)
+		else
+			rebButton.Text = string.format("🔒 Победи %d стражей", Config.REBIRTH_NEED_BOSSES)
+		end
+	end
+	rebButton.BackgroundColor3 = gain >= 1 and Color3.fromRGB(40, 140, 170) or BAD
+	autoStepToggle.Visible = Config.rlvl(d, "r_autostep") >= 1
+	autoStepToggle.Text = d.autoStep and "🦶 Автоспуск: ВКЛ" or "🦶 Автоспуск: ВЫКЛ"
+	autoStepToggle.BackgroundColor3 = d.autoStep and Color3.fromRGB(40, 110, 70) or PANEL
+	autoDigToggle.Visible = Config.rlvl(d, "r_autodig") >= 1
+	autoDigToggle.Text = d.autoDig and "🐾 Крот-помощник: ВКЛ" or "🐾 Крот-помощник: ВЫКЛ"
+	autoDigToggle.BackgroundColor3 = d.autoDig and Color3.fromRGB(40, 110, 70) or PANEL
+	local anyR = false
+	for _, card in ipairs(rCards) do
+		local lvl = Config.rlvl(d, card.r.id)
+		card.lvl.Text = string.format("Уровень %d/%d", lvl, card.r.maxLevel)
+		if lvl >= card.r.maxLevel then
+			card.buy.Text = "МАКС"
+			card.buy.BackgroundColor3 = ACCENT
+			card.buy.TextColor3 = DARKTEXT
+		else
+			local cost = Config.rupCost(card.r, lvl)
+			card.buy.Text = "💠 " .. cost
+			local can = d.tokens >= cost
+			card.buy.BackgroundColor3 = can and GOOD or BAD
+			card.buy.TextColor3 = WHITE
+			anyR = anyR or can
+		end
+	end
+	tabs.reb.badge.Visible = (anyR or gain >= math.max(5, d.tokensEver)) and currentTab ~= "reb"
+end
+
+task.spawn(function()
+	while true do
+		updateUI()
+		task.wait(0.1)
+	end
+end)
+RunService.Heartbeat:Connect(function(dt)
+	if hasState then
+		coinsLabel.Text = "💰 " .. Config.format(coinsNow())
+	end
+	local f = fight
+	if f then
+		f.timeLeft = math.max(0, f.timeLeft - dt)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Сеть
+--------------------------------------------------------------------------------
+local lastStep = -1
+StateR.OnClientEvent:Connect(function(s: any)
+	state.coins = s.coins
+	state.totalCoins = s.totalCoins
+	state.step = s.step
+	state.bestStep = s.bestStep
+	state.bosses = s.bosses
+	state.ups = s.ups or {}
+	state.relics = s.relics or {}
+	state.titles = s.titles or {}
+	state.title = s.title
+	state.tokens = s.tokens
+	state.tokensEver = s.tokensEver
+	state.rebirths = s.rebirths
+	state.rups = s.rups or {}
+	state.digs = s.digs
+	state.rolls = s.rolls
+	state.playTime = s.playTime
+	state.autoStep = s.autoStep
+	state.autoDig = s.autoDig
+	income = s.income
+	fight = s.fight
+	stateTime = os.clock()
+	if lastStep >= 0 and s.step > lastStep then
+		playSound(SND_STEP, 0.4, 0.9 + math.random() * 0.2)
+	end
+	lastStep = s.step
+	hasState = true
+end)
+
+EventR.OnClientEvent:Connect(function(kind: string, a: any, b: any, c: any, dd: any)
+	if kind == "bossReached" then
+		local L = Config.Layers[a]
+		toast("⚔ Путь преграждает " .. L.boss .. "!", RED)
+		playSound(SND_HIT, 0.5, 0.7)
+	elseif kind == "newLayer" then
+		local L = Config.Layers[a]
+		toast(string.format("🌋 Новый слой: %s", L.name), L.glow)
+		playSound(SND_WIN, 0.4, 1.1)
+	elseif kind == "digUnlocked" then
+		toast("🦴 Открыт раскоп: " .. Config.Layers[a].name, CYAN)
+	elseif kind == "fightStart" then
+		playSound(SND_HIT, 0.6)
+		toast("⚔ Бой начался!", RED)
+	elseif kind == "fightWon" then
+		playSound(SND_WIN, 0.7)
+		modal(
+			"⚔ Победа!",
+			string.format("%s повержен!\nНаграда: 💰 %s\n\nПуть в следующий слой открыт.", Config.Layers[a].boss, Config.format(b)),
+			"Глубже!",
+			RED
+		)
+	elseif kind == "fightLost" then
+		playSound(SND_HIT, 0.5, 0.6)
+		toast(string.format("Страж выстоял (осталось %d%% здоровья). Прокачай «Силу» и попробуй снова", math.floor(b * 100 + 0.5)), RED)
+	elseif kind == "relic" then
+		local relic = Config.RelicById[a]
+		if relic then
+			if dd and not c and relic.rarityIndex < 3 and not b then
+				-- автокопание обычных повторок не отвлекает
+				return
+			end
+			showRelic(relic, b, c)
+		end
+	elseif kind == "title" then
+		local t = Config.TitleById[a]
+		if t then
+			if b then
+				playSound(SND_WIN, 0.6, 1.2)
+				toast(string.format("🎖 Новое звание: %s (%s) — доход ×%s!", t.name, Config.formatChance(t.chance), tostring(t.mult)), t.color)
+			else
+				playSound(SND_PING, 0.3, 0.9)
+				toast(string.format("🎲 %s (%s)", t.name, Config.formatChance(t.chance)), t.color)
+			end
+		end
+	elseif kind == "upgraded" then
+		local u = Config.UpById[a]
+		playSound(SND_BUY, 0.4)
+		if u then
+			toast("⬆ " .. u.name .. " — ур. " .. Config.lvl(state, u.id) + b, ACCENT)
+		end
+	elseif kind == "rebirth" then
+		playSound(SND_WIN, 0.7)
+		modal("🔁 Перерождение!", string.format("Получено 💠 %d осколков.\nДоход вырос навсегда. Загляни во вкладку «Перерожд.» — там улучшения за осколки.", a), "Снова вниз!", CYAN)
+		selectTab("reb")
+	elseif kind == "offline" then
+		modal("С возвращением!", string.format("Пока тебя не было (%s), монеты капали сами:\n\n💰 %s", Config.formatTime(b), Config.format(a)), "Забрать")
+	elseif kind == "welcome" then
+		modal(
+			"⬇ В Бездну",
+			"Монеты капают сами. Покупай ступени и спускайся — чем глубже, тем больше доход.\n\nКаждый слой стережёт страж, копай находки на раскопах, крути звания на алтаре и перерождайся ради осколков.",
+			"Вниз!"
+		)
+	elseif kind == "message" then
+		toast(tostring(a), ACCENT)
+	end
+end)
+]]></ProtectedString></Properties></Item>
+</Item>
+</Item>
+</roblox>
