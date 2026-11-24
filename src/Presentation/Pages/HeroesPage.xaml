@@ -36,6 +36,9 @@
                 <Path x:Name="LikeBadge" Visibility="Collapsed" Data="{StaticResource IconHeart}" Fill="{StaticResource Accent}" Stretch="Uniform"
                       Width="13" Height="13" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="5" />
 
+                <!-- Затемнение не найденных при поиске: плавно, через анимацию прозрачности -->
+                <Border x:Name="Shade" Background="#09090B" Opacity="0" IsHitTestVisible="False" />
+
                 <Grid x:Name="HoverPanel" Visibility="Collapsed" Background="#B309090B">
                     <!-- Кнопки уменьшаются вместе с плиткой и не вылезают за её края -->
                     <Viewbox Stretch="Uniform" StretchDirection="DownOnly" Margin="3">
@@ -67,7 +70,30 @@
                     <Setter TargetName="Root" Property="Opacity" Value="0.28" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsDimmed}" Value="True">
-                    <Setter TargetName="Root" Property="Opacity" Value="0.16" />
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Shade" Storyboard.TargetProperty="Opacity"
+                                                 To="0.84" Duration="0:0:0.15">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Shade" Storyboard.TargetProperty="Opacity"
+                                                 To="0" Duration="0:0:0.12">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.ExitActions>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
                     <Setter TargetName="Root" Property="Opacity" Value="1" />
@@ -86,6 +112,7 @@
                 <Trigger SourceName="Root" Property="IsMouseOver" Value="True">
                     <Setter TargetName="HoverPanel" Property="Visibility" Value="Visible" />
                     <Setter TargetName="Root" Property="Opacity" Value="1" />
+                    <Setter TargetName="Shade" Property="Visibility" Value="Collapsed" />
                 </Trigger>
             </DataTemplate.Triggers>
         </DataTemplate>
