@@ -1,4 +1,4 @@
-"""Собирает CrystalClicker.rbxlx из src/*.lua (без Rojo). Запуск: python build.py"""
+"""Собирает CrystalEmpire.rbxlx из src/*.lua (без Rojo). Запуск: python build.py"""
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -16,12 +16,12 @@ def cdata(text):
     return "<![CDATA[" + text.replace("]]>", "]]]]><![CDATA[>") + "]]>"
 
 
-def script(cls, name, file):
+def script(cls, name, file, children=""):
     src = (SRC / file).read_text(encoding="utf-8")
     return (f'<Item class="{cls}" referent="{ref()}"><Properties>'
             f'<string name="Name">{name}</string>'
             f'<ProtectedString name="Source">{cdata(src)}</ProtectedString>'
-            f'</Properties></Item>')
+            f'</Properties>{children}</Item>')
 
 
 def color(r, g, b):
@@ -44,18 +44,17 @@ def part(cls, name, size, pos, rgb, material, extra=""):
             f'{extra}</Properties></Item>')
 
 
-SLATE, SMOOTH_PLASTIC = 800, 272
+SLATE = 800
 
 xml = f"""<roblox version="4">
 <Item class="Workspace" referent="{ref()}"><Properties><string name="Name">Workspace</string></Properties>
-{part("Part", "Baseplate", (512, 20, 512), (0, -10, 0), (40, 36, 56), SLATE, '<bool name="Locked">true</bool>')}
-{part("SpawnLocation", "SpawnLocation", (12, 1, 12), (0, 0.5, 0), (70, 210, 255), SMOOTH_PLASTIC, '<int name="Duration">0</int>')}
+{part("Part", "Baseplate", (1024, 20, 1024), (0, -10, 0), (40, 36, 56), SLATE, '<bool name="Locked">true</bool>')}
 </Item>
 <Item class="ReplicatedStorage" referent="{ref()}"><Properties><string name="Name">ReplicatedStorage</string></Properties>
 {script("ModuleScript", "GameConfig", "GameConfig.lua")}
 </Item>
 <Item class="ServerScriptService" referent="{ref()}"><Properties><string name="Name">ServerScriptService</string></Properties>
-{script("Script", "GameServer", "GameServer.server.lua")}
+{script("Script", "GameServer", "GameServer.server.lua", script("ModuleScript", "World", "World.lua"))}
 </Item>
 <Item class="StarterPlayer" referent="{ref()}"><Properties><string name="Name">StarterPlayer</string></Properties>
 <Item class="StarterPlayerScripts" referent="{ref()}"><Properties><string name="Name">StarterPlayerScripts</string></Properties>
@@ -65,6 +64,6 @@ xml = f"""<roblox version="4">
 </roblox>
 """
 
-out = ROOT / "CrystalClicker.rbxlx"
+out = ROOT / "CrystalEmpire.rbxlx"
 out.write_text(xml, encoding="utf-8")
 print("Готово:", out)

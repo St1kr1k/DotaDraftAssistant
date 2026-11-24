@@ -1,0 +1,3351 @@
+<roblox version="4">
+<Item class="Workspace" referent="RBX00000001"><Properties><string name="Name">Workspace</string></Properties>
+<Item class="Part" referent="RBX00000002"><Properties><string name="Name">Baseplate</string><bool name="Anchored">true</bool><Vector3 name="size"><X>1024</X><Y>20</Y><Z>1024</Z></Vector3><CoordinateFrame name="CFrame"><X>0</X><Y>-10</Y><Z>0</Z><R00>1</R00><R01>0</R01><R02>0</R02><R10>0</R10><R11>1</R11><R12>0</R12><R20>0</R20><R21>0</R21><R22>1</R22></CoordinateFrame><Color3uint8 name="Color3uint8">4280820792</Color3uint8><token name="Material">800</token><token name="TopSurface">0</token><token name="BottomSurface">0</token><bool name="Locked">true</bool></Properties></Item>
+</Item>
+<Item class="ReplicatedStorage" referent="RBX00000003"><Properties><string name="Name">ReplicatedStorage</string></Properties>
+<Item class="ModuleScript" referent="RBX00000004"><Properties><string name="Name">GameConfig</string><ProtectedString name="Source"><![CDATA[-- «Кристальная империя»: весь баланс и формулы. Общий для сервера и клиента.
+local Config = {}
+
+export type Data = {
+	crystals: number,
+	runTotal: number, -- добыто с последнего перерождения
+	allTotal: number, -- добыто за всё время
+	dust: number, -- звёздная пыль (валюта перерождения)
+	dustEver: number, -- пыли получено всего (даёт бонус к добыче)
+	rebirths: number,
+	gens: { [string]: number },
+	ups: { [string]: boolean },
+	pups: { [string]: number },
+	ach: { [string]: boolean },
+	clicks: number,
+	goldens: number,
+	playTime: number,
+	autobuy: boolean,
+	lastOnline: number?,
+}
+
+function Config.newData(): Data
+	return {
+		crystals = 0,
+		runTotal = 0,
+		allTotal = 0,
+		dust = 0,
+		dustEver = 0,
+		rebirths = 0,
+		gens = {},
+		ups = {},
+		pups = {},
+		ach = {},
+		clicks = 0,
+		goldens = 0,
+		playTime = 0,
+		autobuy = true,
+		lastOnline = nil,
+	}
+end
+
+--------------------------------------------------------------------------------
+-- Генераторы
+--------------------------------------------------------------------------------
+export type Generator = {
+	id: string,
+	index: number,
+	name: string,
+	icon: string,
+	baseCost: number,
+	baseProd: number,
+	growth: number,
+	color: Color3,
+}
+
+local GEN_LIST = {
+	{ "gnome", "Гном-шахтёр", "⛏", 15, 0.5, 1.07, Color3.fromRGB(230, 130, 80) },
+	{ "cart", "Вагонетка", "🛒", 150, 2.5, 1.08, Color3.fromRGB(170, 120, 70) },
+	{ "drill", "Бур", "🔩", 2000, 20, 1.09, Color3.fromRGB(240, 200, 60) },
+	{ "mine", "Шахта", "🏔", 30000, 176.471, 1.10, Color3.fromRGB(150, 150, 165) },
+	{ "smelter", "Плавильня", "🔥", 500000, 1785.71, 1.11, Color3.fromRGB(255, 100, 40) },
+	{ "laser", "Лазерная установка", "🔴", 8e6, 17777.8, 1.12, Color3.fromRGB(255, 60, 120) },
+	{ "portal", "Портал в недра", "🌀", 1.5e8, 214286, 1.13, Color3.fromRGB(150, 90, 255) },
+	{ "dragon", "Кристальный дракон", "🐉", 3e9, 2.72727e6, 1.14, Color3.fromRGB(60, 220, 160) },
+	{ "forge", "Звёздная кузница", "⭐", 8e10, 4.70588e7, 1.15, Color3.fromRGB(255, 230, 120) },
+	{ "hole", "Чёрная дыра", "🕳", 3e12, 1.15385e9, 1.15, Color3.fromRGB(120, 60, 200) },
+}
+
+Config.Generators = {} :: { Generator }
+Config.GenById = {} :: { [string]: Generator }
+for i, g in ipairs(GEN_LIST) do
+	local gen: Generator = {
+		id = g[1],
+		index = i,
+		name = g[2],
+		icon = g[3],
+		baseCost = g[4],
+		baseProd = g[5],
+		growth = g[6],
+		color = g[7],
+	}
+	table.insert(Config.Generators, gen)
+	Config.GenById[gen.id] = gen
+end
+
+-- На этих уровнях генератор удваивает добычу
+Config.Milestones = { 10, 25, 50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 800, 900, 1000 }
+
+function Config.milestonesReached(level: number): number
+	local n = 0
+	for _, m in ipairs(Config.Milestones) do
+		if level >= m then
+			n += 1
+		else
+			break
+		end
+	end
+	return n
+end
+
+function Config.nextMilestone(level: number): (number?, number)
+	local prev = 0
+	for _, m in ipairs(Config.Milestones) do
+		if level < m then
+			return m, prev
+		end
+		prev = m
+	end
+	return nil, prev
+end
+
+--------------------------------------------------------------------------------
+-- Улучшения (разовые, за кристаллы)
+--------------------------------------------------------------------------------
+export type Upgrade = {
+	id: string,
+	name: string,
+	desc: string,
+	cost: number,
+	kind: string, -- "gen" | "global" | "click" | "golden" | "brigade"
+	target: string?,
+	value: number,
+	needGen: string?,
+	needLevel: number?,
+	color: Color3,
+}
+
+Config.Upgrades = {} :: { Upgrade }
+Config.UpById = {} :: { [string]: Upgrade }
+
+local function addUp(u: Upgrade)
+	table.insert(Config.Upgrades, u)
+	Config.UpById[u.id] = u
+end
+
+local GEN_UP_STEPS = {
+	{ 10, 2, "Закалка" },
+	{ 25, 2, "Ускорение" },
+	{ 50, 2, "Мастерство" },
+	{ 100, 3, "Легенда" },
+	{ 200, 3, "Миф" },
+}
+
+for _, gen in ipairs(Config.Generators) do
+	for step, s in ipairs(GEN_UP_STEPS) do
+		local need, mult, title = s[1], s[2], s[3]
+		addUp({
+			id = gen.id .. "_" .. step,
+			name = gen.name .. ": " .. title,
+			desc = string.format("%s добывает ×%d", gen.name, mult),
+			cost = gen.baseCost * gen.growth ^ need * 12,
+			kind = "gen",
+			target = gen.id,
+			value = mult,
+			needGen = gen.id,
+			needLevel = need,
+			color = gen.color,
+		})
+	end
+end
+
+local GOLD = Color3.fromRGB(255, 205, 60)
+local CYAN = Color3.fromRGB(70, 210, 255)
+local PINK = Color3.fromRGB(255, 100, 200)
+
+for _, u in
+	ipairs({
+		{ "click1", "Тяжёлая кирка", "Клик даёт +2% дохода в секунду", 500, "click", 0.02 },
+		{ "click2", "Алмазная кирка", "Клик даёт ещё +3% дохода в секунду", 2e5, "click", 0.03 },
+		{ "click3", "Кирка бури", "Клик даёт ещё +5% дохода в секунду", 5e8, "click", 0.05 },
+		{ "click4", "Кирка вечности", "Клик даёт ещё +10% дохода в секунду", 5e12, "click", 0.10 },
+		{ "glob1", "Кристальная смазка", "Вся добыча ×1.5", 1e4, "global", 1.5 },
+		{ "glob2", "Резонанс", "Вся добыча ×1.5", 1e7, "global", 1.5 },
+		{ "glob3", "Квантовая огранка", "Вся добыча ×1.5", 1e10, "global", 1.5 },
+		{ "glob4", "Песнь кристаллов", "Вся добыча ×2", 1e13, "global", 2 },
+		{ "glob5", "Сердце горы", "Вся добыча ×3", 1e16, "global", 3 },
+		{ "gold1", "Зоркий глаз", "Сверкающие кристаллы появляются на 20% чаще", 5e4, "golden", 0.8 },
+		{ "gold2", "Золотые руки", "Сверкающие кристаллы появляются ещё на 20% чаще", 5e7, "golden", 0.8 },
+		{ "brig1", "Бригада", "+0.5% к добыче за каждые 10 уровней всех генераторов", 1e6, "brigade", 0.005 },
+		{ "brig2", "Профсоюз", "Ещё +0.5% за каждые 10 уровней всех генераторов", 1e11, "brigade", 0.005 },
+	})
+do
+	local kind = u[5]
+	addUp({
+		id = u[1],
+		name = u[2],
+		desc = u[3],
+		cost = u[4],
+		kind = kind,
+		value = u[6],
+		color = kind == "click" and PINK or kind == "golden" and GOLD or CYAN,
+	})
+end
+
+function Config.isUpgradeUnlocked(data: Data, up: Upgrade): boolean
+	if data.ups[up.id] then
+		return false
+	end
+	if up.needGen then
+		return (data.gens[up.needGen] or 0) >= (up.needLevel or 0)
+	end
+	if up.kind == "click" then
+		return data.clicks >= 10 and data.runTotal >= up.cost * 0.2
+	end
+	return data.runTotal >= up.cost * 0.2
+end
+
+--------------------------------------------------------------------------------
+-- Перерождение и звёздные улучшения (за пыль)
+--------------------------------------------------------------------------------
+Config.DustPerBonus = 0.04 -- +4% к добыче за каждую полученную пыль
+Config.DustDivider = 1e9
+
+export type PrestigeUp = {
+	id: string,
+	name: string,
+	desc: string,
+	baseCost: number,
+	growth: number,
+	maxLevel: number,
+}
+
+Config.PrestigeUps = {
+	{ id = "prod", name = "Благословение", desc = "Вся добыча ×2 за уровень", baseCost = 3, growth = 3, maxLevel = 15 },
+	{ id = "start", name = "Стартовый капитал", desc = "После перерождения сразу 💎 ×10 за уровень (1K, 10K…)", baseCost = 1, growth = 3, maxLevel = 8 },
+	{ id = "auto", name = "Прораб", desc = "Сам докупает генераторы, когда хватает (можно выключить)", baseCost = 5, growth = 1, maxLevel = 1 },
+	{ id = "click", name = "Звёздная кирка", desc = "Клик ×3 за уровень", baseCost = 2, growth = 2.5, maxLevel = 6 },
+	{ id = "golden", name = "Золотая жила", desc = "Сверкающие кристаллы на 15% чаще за уровень", baseCost = 3, growth = 3, maxLevel = 4 },
+	{ id = "frenzy", name = "Долгая лихорадка", desc = "Бонусы сверкающих кристаллов длятся +10 с за уровень", baseCost = 4, growth = 2.5, maxLevel = 4 },
+	{ id = "offline", name = "Сон шахтёра", desc = "Оффлайн-доход +25% и +3 ч за уровень", baseCost = 4, growth = 4, maxLevel = 2 },
+	{ id = "discount", name = "Скидка гильдии", desc = "Генераторы дешевле на 5% за уровень", baseCost = 10, growth = 3, maxLevel = 6 },
+	{ id = "dust", name = "Звёздный магнит", desc = "Пыли за перерождение +25% за уровень", baseCost = 15, growth = 3, maxLevel = 6 },
+} :: { PrestigeUp }
+
+Config.PUpById = {} :: { [string]: PrestigeUp }
+for _, p in ipairs(Config.PrestigeUps) do
+	Config.PUpById[p.id] = p
+end
+
+function Config.pupLevel(data: Data, id: string): number
+	return data.pups[id] or 0
+end
+
+function Config.pupCost(p: PrestigeUp, level: number): number
+	return math.floor(p.baseCost * p.growth ^ level)
+end
+
+function Config.dustOnRebirth(data: Data): number
+	local mult = 1 + 0.25 * Config.pupLevel(data, "dust")
+	return math.floor((data.runTotal / Config.DustDivider) ^ (1 / 3) * mult)
+end
+
+-- Сколько нужно добыть за забег, чтобы получить хотя бы n пыли
+function Config.runTotalForDust(data: Data, n: number): number
+	local mult = 1 + 0.25 * Config.pupLevel(data, "dust")
+	return (n / mult) ^ 3 * Config.DustDivider
+end
+
+function Config.startCrystals(data: Data): number
+	local lvl = Config.pupLevel(data, "start")
+	if lvl <= 0 then
+		return 0
+	end
+	return 10 ^ (lvl + 2)
+end
+
+--------------------------------------------------------------------------------
+-- Достижения
+--------------------------------------------------------------------------------
+export type Achievement = {
+	id: string,
+	name: string,
+	desc: string,
+	check: (Data) -> boolean,
+}
+
+Config.AchievementBonus = 0.02 -- +2% к добыче за каждое
+Config.Achievements = {} :: { Achievement }
+
+local function addAch(id: string, name: string, desc: string, check: (Data) -> boolean)
+	table.insert(Config.Achievements, { id = id, name = name, desc = desc, check = check })
+end
+
+for _, t in
+	ipairs({
+		{ 1e3, "Первая тысяча", "1K" },
+		{ 1e6, "Миллионер", "1M" },
+		{ 1e9, "Миллиардер", "1B" },
+		{ 1e12, "Триллионер", "1T" },
+		{ 1e15, "Кристальный магнат", "1Qa" },
+		{ 1e18, "Повелитель недр", "1Qi" },
+		{ 1e21, "Владыка самоцветов", "1Sx" },
+		{ 1e24, "Бог кристаллов", "1Sp" },
+	})
+do
+	local amount = t[1]
+	addAch("total_" .. amount, t[2], "Добыть всего 💎 " .. t[3], function(d)
+		return d.allTotal >= amount
+	end)
+end
+
+for _, gen in ipairs(Config.Generators) do
+	for _, lvl in ipairs({ 1, 50, 100, 200 }) do
+		local id = gen.id
+		local name = lvl == 1 and ("Первый: " .. gen.name) or string.format("%s ×%d", gen.name, lvl)
+		addAch("gen_" .. id .. "_" .. lvl, name, string.format("%s: уровень %d", gen.name, lvl), function(d)
+			return (d.gens[id] or 0) >= lvl
+		end)
+	end
+end
+
+for _, t in ipairs({ { 100, "Разминка" }, { 1000, "Мозоли" }, { 10000, "Железный палец" } }) do
+	local n = t[1]
+	addAch("clicks_" .. n, t[2], string.format("Кликнуть по кристаллу %d раз", n), function(d)
+		return d.clicks >= n
+	end)
+end
+
+for _, t in ipairs({ { 1, "Что это блестит?" }, { 10, "Ловец бликов" }, { 50, "Золотая лихорадка" } }) do
+	local n = t[1]
+	addAch("gold_" .. n, t[2], string.format("Поймать %d сверкающих кристаллов", n), function(d)
+		return d.goldens >= n
+	end)
+end
+
+for _, t in ipairs({ { 1, "Новое начало" }, { 5, "Круговорот" }, { 20, "Вечный шахтёр" } }) do
+	local n = t[1]
+	addAch("reb_" .. n, t[2], string.format("Переродиться %d раз", n), function(d)
+		return d.rebirths >= n
+	end)
+end
+
+for _, t in ipairs({ { 10, "Модернизация" }, { 30, "Технократ" }, { 60, "Всё куплено" } }) do
+	local n = t[1]
+	addAch("ups_" .. n, t[2], string.format("Купить %d улучшений", n), function(d)
+		local c = 0
+		for _ in pairs(d.ups) do
+			c += 1
+		end
+		return c >= n
+	end)
+end
+
+Config.AchById = {} :: { [string]: Achievement }
+for _, a in ipairs(Config.Achievements) do
+	Config.AchById[a.id] = a
+end
+
+--------------------------------------------------------------------------------
+-- Формулы добычи
+--------------------------------------------------------------------------------
+local function countKeys(t: { [string]: any }): number
+	local n = 0
+	for _ in pairs(t) do
+		n += 1
+	end
+	return n
+end
+Config.countKeys = countKeys
+
+function Config.genUpgradeMult(data: Data, genId: string): number
+	local m = 1
+	for step, s in ipairs(GEN_UP_STEPS) do
+		if data.ups[genId .. "_" .. step] then
+			m *= s[2]
+		end
+	end
+	return m
+end
+
+function Config.totalGenLevels(data: Data): number
+	local n = 0
+	for _, lvl in pairs(data.gens) do
+		n += lvl
+	end
+	return n
+end
+
+-- Множитель ко всей добыче (без временных бонусов)
+function Config.globalMult(data: Data): number
+	local m = 1
+	local brigade = 0
+	for _, up in ipairs(Config.Upgrades) do
+		if data.ups[up.id] then
+			if up.kind == "global" then
+				m *= up.value
+			elseif up.kind == "brigade" then
+				brigade += up.value
+			end
+		end
+	end
+	m *= 1 + brigade * math.floor(Config.totalGenLevels(data) / 10)
+	m *= 1 + Config.DustPerBonus * data.dustEver
+	m *= 1 + Config.AchievementBonus * countKeys(data.ach)
+	m *= 2 ^ Config.pupLevel(data, "prod")
+	return m
+end
+
+function Config.genProduction(data: Data, gen: Generator, globalMult: number?): number
+	local level = data.gens[gen.id] or 0
+	if level <= 0 then
+		return 0
+	end
+	local g = globalMult or Config.globalMult(data)
+	return gen.baseProd * level * 2 ^ Config.milestonesReached(level) * Config.genUpgradeMult(data, gen.id) * g
+end
+
+-- Доход в секунду без временных бонусов
+function Config.basePerSecond(data: Data): number
+	local g = Config.globalMult(data)
+	local total = 0
+	for _, gen in ipairs(Config.Generators) do
+		total += Config.genProduction(data, gen, g)
+	end
+	return total
+end
+
+Config.FrenzyMult = 7
+Config.ClickStormMult = 50
+
+function Config.clickPercent(data: Data): number
+	local p = 0
+	for _, up in ipairs(Config.Upgrades) do
+		if up.kind == "click" and data.ups[up.id] then
+			p += up.value
+		end
+	end
+	return p
+end
+
+-- Сколько даёт один клик (без временных бонусов)
+function Config.baseClick(data: Data, basePerSec: number): number
+	local base = (1 + basePerSec * Config.clickPercent(data)) * (1 + Config.DustPerBonus * data.dustEver)
+	return base * 3 ^ Config.pupLevel(data, "click")
+end
+
+--------------------------------------------------------------------------------
+-- Цены генераторов
+--------------------------------------------------------------------------------
+function Config.discount(data: Data): number
+	return 0.95 ^ Config.pupLevel(data, "discount")
+end
+
+-- Цена n уровней начиная с текущего
+function Config.genCost(data: Data, gen: Generator, n: number): number
+	local level = data.gens[gen.id] or 0
+	local first = gen.baseCost * gen.growth ^ level * Config.discount(data)
+	if n == 1 then
+		return math.ceil(first)
+	end
+	return math.ceil(first * (gen.growth ^ n - 1) / (gen.growth - 1))
+end
+
+-- Сколько уровней можно купить на bank (не больше limit)
+function Config.maxAffordable(data: Data, gen: Generator, bank: number, limit: number?): number
+	local level = data.gens[gen.id] or 0
+	local first = gen.baseCost * gen.growth ^ level * Config.discount(data)
+	if bank < first then
+		return 0
+	end
+	local n = math.floor(math.log(bank * (gen.growth - 1) / first + 1) / math.log(gen.growth))
+	if limit then
+		n = math.min(n, limit)
+	end
+	n = math.max(n, 0)
+	while n > 0 and Config.genCost(data, gen, n) > bank do
+		n -= 1
+	end
+	return n
+end
+
+--------------------------------------------------------------------------------
+-- Сверкающие кристаллы (золотые бонусы)
+--------------------------------------------------------------------------------
+Config.GoldenMinInterval = 50
+Config.GoldenMaxInterval = 110
+Config.GoldenLifetime = 13
+
+function Config.goldenIntervalMult(data: Data): number
+	local m = 1
+	for _, up in ipairs(Config.Upgrades) do
+		if up.kind == "golden" and data.ups[up.id] then
+			m *= up.value
+		end
+	end
+	return m * 0.85 ^ Config.pupLevel(data, "golden")
+end
+
+function Config.frenzyDuration(data: Data): number
+	return 30 + 10 * Config.pupLevel(data, "frenzy")
+end
+
+function Config.stormDuration(data: Data): number
+	return 15 + 10 * Config.pupLevel(data, "frenzy")
+end
+
+--------------------------------------------------------------------------------
+-- Оффлайн
+--------------------------------------------------------------------------------
+function Config.offlineRate(data: Data): number
+	return 0.5 + 0.25 * Config.pupLevel(data, "offline")
+end
+
+function Config.offlineMaxSeconds(data: Data): number
+	return (2 + 3 * Config.pupLevel(data, "offline")) * 3600
+end
+
+--------------------------------------------------------------------------------
+-- Форматирование
+--------------------------------------------------------------------------------
+local SUFFIXES = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc", "UDc", "DDc", "TDc", "QaDc", "QiDc" }
+
+function Config.format(n: number): string
+	if n ~= n then
+		return "0"
+	end
+	if n < 1000 then
+		if n < 10 and n ~= math.floor(n) then
+			return string.format("%.1f", math.floor(n * 10) / 10)
+		end
+		return tostring(math.floor(n))
+	end
+	local i = 1
+	local v = n
+	while v >= 1000 and i < #SUFFIXES do
+		v /= 1000
+		i += 1
+	end
+	if v >= 1000 then
+		return string.format("%.2e", n)
+	elseif v >= 100 then
+		return string.format("%d%s", math.floor(v), SUFFIXES[i])
+	elseif v >= 10 then
+		return string.format("%.1f%s", math.floor(v * 10) / 10, SUFFIXES[i])
+	end
+	return string.format("%.2f%s", math.floor(v * 100) / 100, SUFFIXES[i])
+end
+
+function Config.formatTime(seconds: number): string
+	seconds = math.max(0, math.floor(seconds))
+	local h = math.floor(seconds / 3600)
+	local m = math.floor(seconds % 3600 / 60)
+	local s = seconds % 60
+	if h > 0 then
+		return string.format("%d ч %02d мин", h, m)
+	elseif m > 0 then
+		return string.format("%d мин %02d с", m, s)
+	end
+	return string.format("%d с", s)
+end
+
+return Config
+]]></ProtectedString></Properties></Item>
+</Item>
+<Item class="ServerScriptService" referent="RBX00000005"><Properties><string name="Name">ServerScriptService</string></Properties>
+<Item class="Script" referent="RBX00000007"><Properties><string name="Name">GameServer</string><ProtectedString name="Source"><![CDATA[-- Сервер «Кристальной империи»: экономика, участки, бонусы, перерождение, сохранение, топ.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+local World = require(script:WaitForChild("World"))
+
+type Data = Config.Data
+
+--------------------------------------------------------------------------------
+-- Хранилища
+--------------------------------------------------------------------------------
+local store: DataStore? = nil
+local topStore: OrderedDataStore? = nil
+do
+	local ok, err = pcall(function()
+		store = DataStoreService:GetDataStore("CrystalEmpire_v1")
+		topStore = DataStoreService:GetOrderedDataStore("CrystalEmpire_Top_v1")
+	end)
+	if not ok then
+		warn("DataStore недоступен (в Studio включите API Services):", err)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Remotes
+--------------------------------------------------------------------------------
+local remotes = Instance.new("Folder")
+remotes.Name = "Remotes"
+local function remote(name: string): RemoteEvent
+	local r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = remotes
+	return r
+end
+local R = {
+	Click = remote("Click"),
+	BuyGen = remote("BuyGen"),
+	BuyUp = remote("BuyUp"),
+	BuyAllUps = remote("BuyAllUps"),
+	BuyPUp = remote("BuyPUp"),
+	Rebirth = remote("Rebirth"),
+	ClaimGolden = remote("ClaimGolden"),
+	ToggleAuto = remote("ToggleAuto"),
+	GoHome = remote("GoHome"),
+	State = remote("State"), -- сервер -> клиент: снимок данных
+	Event = remote("Event"), -- сервер -> клиент: всплывашки, сообщения
+}
+remotes.Parent = ReplicatedStorage
+
+--------------------------------------------------------------------------------
+-- Мир
+--------------------------------------------------------------------------------
+local plots = World.build()
+
+--------------------------------------------------------------------------------
+-- Сессии
+--------------------------------------------------------------------------------
+type Session = {
+	player: Player,
+	data: Data,
+	plot: World.Plot?,
+	perSec: number, -- без временных бонусов
+	clickValue: number,
+	frenzyLeft: number,
+	stormLeft: number,
+	clickBudget: number,
+	goldenToken: string?,
+	goldenExpire: number,
+	nextGolden: number,
+	autoTimer: number,
+	dirty: boolean, -- нужно пересчитать доход и обновить участок
+	loaded: boolean,
+}
+
+local sessions: { [Player]: Session } = {}
+local MAX_CLICKS_PER_SEC = 16
+
+local function sanitize(saved: any): Data
+	local d = Config.newData()
+	if type(saved) ~= "table" then
+		return d
+	end
+	local function num(v: any): number
+		local n = tonumber(v)
+		if n == nil or n ~= n or n == math.huge then
+			return 0
+		end
+		return math.max(0, n)
+	end
+	d.crystals = num(saved.crystals)
+	d.runTotal = num(saved.runTotal)
+	d.allTotal = num(saved.allTotal)
+	d.dust = num(saved.dust)
+	d.dustEver = num(saved.dustEver)
+	d.rebirths = num(saved.rebirths)
+	d.clicks = num(saved.clicks)
+	d.goldens = num(saved.goldens)
+	d.playTime = num(saved.playTime)
+	d.autobuy = saved.autobuy ~= false
+	d.lastOnline = tonumber(saved.lastOnline)
+	if type(saved.gens) == "table" then
+		for id, lvl in pairs(saved.gens) do
+			if Config.GenById[id] then
+				d.gens[id] = math.floor(num(lvl))
+			end
+		end
+	end
+	if type(saved.ups) == "table" then
+		for id, v in pairs(saved.ups) do
+			if Config.UpById[id] and v then
+				d.ups[id] = true
+			end
+		end
+	end
+	if type(saved.pups) == "table" then
+		for id, lvl in pairs(saved.pups) do
+			local p = Config.PUpById[id]
+			if p then
+				d.pups[id] = math.min(p.maxLevel, math.floor(num(lvl)))
+			end
+		end
+	end
+	if type(saved.ach) == "table" then
+		for id, v in pairs(saved.ach) do
+			if Config.AchById[id] and v then
+				d.ach[id] = true
+			end
+		end
+	end
+	return d
+end
+
+local function recompute(s: Session)
+	s.perSec = Config.basePerSecond(s.data)
+	s.clickValue = Config.baseClick(s.data, s.perSec)
+end
+
+local function currentMult(s: Session): number
+	return s.frenzyLeft > 0 and Config.FrenzyMult or 1
+end
+
+local function scheduleGolden(s: Session)
+	local base = math.random(Config.GoldenMinInterval, Config.GoldenMaxInterval)
+	s.nextGolden = os.clock() + base * Config.goldenIntervalMult(s.data)
+end
+
+local function setLeaderstats(s: Session)
+	local ls = s.player:FindFirstChild("leaderstats")
+	if not ls then
+		return
+	end
+	local c = ls:FindFirstChild("💎 Кристаллы") :: StringValue?
+	if c then
+		c.Value = Config.format(s.data.crystals)
+	end
+	local d = ls:FindFirstChild("✨ Пыль") :: IntValue?
+	if d then
+		d.Value = s.data.dustEver
+	end
+end
+
+local function sendState(s: Session)
+	local d = s.data
+	R.State:FireClient(s.player, {
+		crystals = d.crystals,
+		runTotal = d.runTotal,
+		allTotal = d.allTotal,
+		dust = d.dust,
+		dustEver = d.dustEver,
+		rebirths = d.rebirths,
+		gens = d.gens,
+		ups = d.ups,
+		pups = d.pups,
+		ach = d.ach,
+		clicks = d.clicks,
+		goldens = d.goldens,
+		playTime = d.playTime,
+		autobuy = d.autobuy,
+		perSec = s.perSec,
+		clickValue = s.clickValue,
+		frenzyLeft = s.frenzyLeft,
+		stormLeft = s.stormLeft,
+	})
+end
+
+local function event(s: Session, kind: string, ...)
+	R.Event:FireClient(s.player, kind, ...)
+end
+
+local function addCrystals(s: Session, amount: number)
+	if amount ~= amount or amount <= 0 then
+		return
+	end
+	local d = s.data
+	d.crystals += amount
+	d.runTotal += amount
+	d.allTotal += amount
+end
+
+-- Обновить станции и надписи на участке игрока
+local function refreshPlot(s: Session)
+	local plot = s.plot
+	if not plot then
+		return
+	end
+	local g = Config.globalMult(s.data)
+	for _, gen in ipairs(Config.Generators) do
+		local lvl = s.data.gens[gen.id] or 0
+		World.updateStation(plot, gen.id, lvl, Config.genProduction(s.data, gen, g) * currentMult(s))
+	end
+	local sparkles = plot.crystal:FindFirstChild("Sparkles") :: ParticleEmitter?
+	if sparkles then
+		sparkles.Rate = math.clamp(4 + math.log10(s.perSec + 1) * 3, 4, 60)
+	end
+	plot.ownerLabel.Text = string.format("Империя %s\n💎 %s/с", s.player.DisplayName, Config.format(s.perSec * currentMult(s)))
+end
+
+local function checkAchievements(s: Session)
+	local newOnes = {}
+	for _, a in ipairs(Config.Achievements) do
+		if not s.data.ach[a.id] and a.check(s.data) then
+			s.data.ach[a.id] = true
+			table.insert(newOnes, a.id)
+		end
+	end
+	if #newOnes > 0 then
+		s.dirty = true
+		for _, id in ipairs(newOnes) do
+			event(s, "achievement", id)
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Сохранение и топ
+--------------------------------------------------------------------------------
+local function save(player: Player)
+	local s = sessions[player]
+	if not s or not s.loaded or not store then
+		return
+	end
+	local d = s.data
+	local payload = {
+		crystals = d.crystals,
+		runTotal = d.runTotal,
+		allTotal = d.allTotal,
+		dust = d.dust,
+		dustEver = d.dustEver,
+		rebirths = d.rebirths,
+		gens = d.gens,
+		ups = d.ups,
+		pups = d.pups,
+		ach = d.ach,
+		clicks = d.clicks,
+		goldens = d.goldens,
+		playTime = d.playTime,
+		autobuy = d.autobuy,
+		lastOnline = os.time(),
+	}
+	local ok, err = pcall(function()
+		(store :: DataStore):SetAsync("p_" .. player.UserId, payload)
+	end)
+	if not ok then
+		warn("Не удалось сохранить", player.Name, err)
+	end
+	if topStore and d.allTotal > 0 then
+		-- В OrderedDataStore только целые: храним log10 × 1000
+		local score = math.floor(math.log10(d.allTotal + 1) * 1000)
+		pcall(function()
+			(topStore :: OrderedDataStore):SetAsync("u_" .. player.UserId, score)
+		end)
+	end
+end
+
+local nameCache: { [number]: string } = {}
+local function refreshLeaderboard()
+	if not topStore then
+		World.setLeaderboard({})
+		return
+	end
+	local ok, pages = pcall(function()
+		return (topStore :: OrderedDataStore):GetSortedAsync(false, 10)
+	end)
+	if not ok or not pages then
+		return
+	end
+	local rows = {}
+	for _, entry in ipairs((pages :: DataStorePages):GetCurrentPage()) do
+		local uid = tonumber(string.sub(entry.key, 3))
+		if uid then
+			local name = nameCache[uid]
+			if not name then
+				local okName, n = pcall(function()
+					return Players:GetNameFromUserIdAsync(uid)
+				end)
+				name = okName and n or ("Игрок " .. uid)
+				nameCache[uid] = name
+			end
+			table.insert(rows, { name = name :: string, value = 10 ^ (entry.value / 1000) })
+		end
+	end
+	World.setLeaderboard(rows)
+end
+
+--------------------------------------------------------------------------------
+-- Вход / выход
+--------------------------------------------------------------------------------
+local function teleportHome(s: Session)
+	local plot = s.plot
+	local char = s.player.Character
+	if not plot or not char then
+		return
+	end
+	local root = char:FindFirstChild("HumanoidRootPart")
+	if root then
+		char:PivotTo(plot.spawnCFrame)
+	end
+end
+
+local function claimPlot(s: Session)
+	for _, plot in ipairs(plots) do
+		if plot.owner == nil then
+			plot.owner = s.player
+			s.plot = plot
+			s.player:SetAttribute("Plot", plot.index)
+			return
+		end
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	local ls = Instance.new("Folder")
+	ls.Name = "leaderstats"
+	local c = Instance.new("StringValue")
+	c.Name = "💎 Кристаллы"
+	c.Value = "0"
+	c.Parent = ls
+	local dv = Instance.new("IntValue")
+	dv.Name = "✨ Пыль"
+	dv.Parent = ls
+	ls.Parent = player
+
+	local s: Session = {
+		player = player,
+		data = Config.newData(),
+		plot = nil,
+		perSec = 0,
+		clickValue = 1,
+		frenzyLeft = 0,
+		stormLeft = 0,
+		clickBudget = MAX_CLICKS_PER_SEC,
+		goldenToken = nil,
+		goldenExpire = 0,
+		nextGolden = 0,
+		autoTimer = 0,
+		dirty = true,
+		loaded = false,
+	}
+	sessions[player] = s
+	claimPlot(s)
+
+	player.CharacterAdded:Connect(function(char)
+		char:WaitForChild("HumanoidRootPart", 10)
+		task.wait(0.1)
+		teleportHome(s)
+	end)
+	if player.Character then
+		task.spawn(teleportHome, s)
+	end
+
+	-- Загрузка
+	local saved = nil
+	local loadedOk = true
+	if store then
+		local ok, result = pcall(function()
+			return (store :: DataStore):GetAsync("p_" .. player.UserId)
+		end)
+		if ok then
+			saved = result
+		else
+			loadedOk = false
+			warn("Не удалось загрузить", player.Name, result)
+		end
+	end
+	if not player.Parent then
+		return
+	end
+	s.data = sanitize(saved)
+	-- Если загрузка упала, не сохраняем поверх (чтобы не затереть прогресс пустым)
+	s.loaded = loadedOk
+	recompute(s)
+	scheduleGolden(s)
+	s.nextGolden = os.clock() + 25 -- первый сверкающий кристалл пораньше
+	refreshPlot(s)
+	setLeaderstats(s)
+	player:SetAttribute("Loaded", true)
+
+	-- Оффлайн-доход
+	local d = s.data
+	if d.lastOnline and s.perSec > 0 then
+		local away = os.time() - d.lastOnline
+		local counted = math.clamp(away, 0, Config.offlineMaxSeconds(d))
+		local earned = s.perSec * counted * Config.offlineRate(d)
+		if away >= 60 and earned >= 1 then
+			addCrystals(s, earned)
+			task.delay(2, function()
+				if player.Parent then
+					event(s, "offline", earned, away)
+				end
+			end)
+		end
+	elseif not d.lastOnline then
+		task.delay(2, function()
+			if player.Parent then
+				event(s, "welcome")
+			end
+		end)
+	end
+	if not loadedOk then
+		event(s, "message", "⚠ Не удалось загрузить сохранение. Прогресс этой сессии не сохранится — перезайди позже.")
+	end
+	sendState(s)
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+for _, p in ipairs(Players:GetPlayers()) do
+	task.spawn(onPlayerAdded, p)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	save(player)
+	local s = sessions[player]
+	if s and s.plot then
+		s.plot.owner = nil
+		World.resetPlot(s.plot)
+	end
+	sessions[player] = nil
+end)
+
+game:BindToClose(function()
+	local threads = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		threads += 1
+		task.spawn(function()
+			save(player)
+			threads -= 1
+		end)
+	end
+	local t = os.clock()
+	while threads > 0 and os.clock() - t < 25 do
+		task.wait(0.1)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Действия игрока
+--------------------------------------------------------------------------------
+local function doClick(player: Player)
+	local s = sessions[player]
+	if not s or s.clickBudget < 1 then
+		return
+	end
+	s.clickBudget -= 1
+	local amount = s.clickValue * currentMult(s)
+	if s.stormLeft > 0 then
+		amount *= Config.ClickStormMult
+	end
+	addCrystals(s, amount)
+	s.data.clicks += 1
+	event(s, "click", amount)
+end
+
+R.Click.OnServerEvent:Connect(doClick)
+for _, plot in ipairs(plots) do
+	local detector = plot.crystal:FindFirstChildOfClass("ClickDetector")
+	if detector then
+		detector.MouseClick:Connect(function(player)
+			if plot.owner == player then
+				doClick(player)
+			end
+		end)
+	end
+end
+
+local function buyGen(s: Session, gen: Config.Generator, limit: number): number
+	local n = Config.maxAffordable(s.data, gen, s.data.crystals, limit)
+	if n <= 0 then
+		return 0
+	end
+	local cost = Config.genCost(s.data, gen, n)
+	if cost > s.data.crystals then
+		return 0
+	end
+	local before = s.data.gens[gen.id] or 0
+	s.data.crystals -= cost
+	s.data.gens[gen.id] = before + n
+	if Config.milestonesReached(before + n) > Config.milestonesReached(before) then
+		event(s, "milestone", gen.id, before + n)
+	end
+	s.dirty = true
+	return n
+end
+
+R.BuyGen.OnServerEvent:Connect(function(player, id, mode)
+	local s = sessions[player]
+	local gen = type(id) == "string" and Config.GenById[id] or nil
+	if not s or not gen then
+		return
+	end
+	local limit = 1
+	if mode == 10 or mode == 100 then
+		limit = mode
+	elseif mode == "max" then
+		limit = 100000
+	end
+	if buyGen(s, gen, limit) > 0 then
+		recompute(s)
+		checkAchievements(s)
+		sendState(s)
+	end
+end)
+
+local function buyUp(s: Session, up: Config.Upgrade): boolean
+	if not Config.isUpgradeUnlocked(s.data, up) or s.data.crystals < up.cost then
+		return false
+	end
+	s.data.crystals -= up.cost
+	s.data.ups[up.id] = true
+	s.dirty = true
+	return true
+end
+
+R.BuyUp.OnServerEvent:Connect(function(player, id)
+	local s = sessions[player]
+	local up = type(id) == "string" and Config.UpById[id] or nil
+	if not s or not up then
+		return
+	end
+	if buyUp(s, up) then
+		recompute(s)
+		checkAchievements(s)
+		event(s, "bought", up.id)
+		sendState(s)
+	end
+end)
+
+R.BuyAllUps.OnServerEvent:Connect(function(player)
+	local s = sessions[player]
+	if not s then
+		return
+	end
+	local list = {}
+	for _, up in ipairs(Config.Upgrades) do
+		if Config.isUpgradeUnlocked(s.data, up) then
+			table.insert(list, up)
+		end
+	end
+	table.sort(list, function(a, b)
+		return a.cost < b.cost
+	end)
+	local count = 0
+	for _, up in ipairs(list) do
+		if buyUp(s, up) then
+			count += 1
+		end
+	end
+	if count > 0 then
+		recompute(s)
+		checkAchievements(s)
+		event(s, "message", string.format("Куплено улучшений: %d", count))
+		sendState(s)
+	end
+end)
+
+R.BuyPUp.OnServerEvent:Connect(function(player, id)
+	local s = sessions[player]
+	local p = type(id) == "string" and Config.PUpById[id] or nil
+	if not s or not p then
+		return
+	end
+	local lvl = Config.pupLevel(s.data, p.id)
+	if lvl >= p.maxLevel then
+		return
+	end
+	local cost = Config.pupCost(p, lvl)
+	if s.data.dust < cost then
+		return
+	end
+	s.data.dust -= cost
+	s.data.pups[p.id] = lvl + 1
+	s.dirty = true
+	recompute(s)
+	event(s, "message", string.format("✨ %s — уровень %d", p.name, lvl + 1))
+	sendState(s)
+end)
+
+R.Rebirth.OnServerEvent:Connect(function(player)
+	local s = sessions[player]
+	if not s then
+		return
+	end
+	local d = s.data
+	local gain = Config.dustOnRebirth(d)
+	if gain < 1 then
+		return
+	end
+	d.dust += gain
+	d.dustEver += gain
+	d.rebirths += 1
+	d.runTotal = 0
+	d.gens = {}
+	d.ups = {}
+	d.crystals = Config.startCrystals(d)
+	s.frenzyLeft = 0
+	s.stormLeft = 0
+	s.dirty = true
+	recompute(s)
+	checkAchievements(s)
+	event(s, "rebirth", gain, d.rebirths)
+	sendState(s)
+	task.spawn(save, player)
+end)
+
+R.ClaimGolden.OnServerEvent:Connect(function(player, token)
+	local s = sessions[player]
+	if not s or not s.goldenToken or token ~= s.goldenToken or os.clock() > s.goldenExpire then
+		return
+	end
+	s.goldenToken = nil
+	scheduleGolden(s)
+	s.data.goldens += 1
+	local roll = math.random()
+	if roll < 0.5 then
+		-- Удача: мгновенная награда
+		local amount = math.max(s.perSec * 60, math.min(s.data.crystals * 0.15, s.perSec * 900)) + 25
+		addCrystals(s, amount)
+		event(s, "golden", "lucky", amount)
+	elseif roll < 0.85 then
+		s.frenzyLeft = Config.frenzyDuration(s.data)
+		event(s, "golden", "frenzy", s.frenzyLeft)
+	else
+		s.stormLeft = Config.stormDuration(s.data)
+		event(s, "golden", "storm", s.stormLeft)
+	end
+	s.dirty = true
+	checkAchievements(s)
+	sendState(s)
+end)
+
+R.ToggleAuto.OnServerEvent:Connect(function(player)
+	local s = sessions[player]
+	if not s then
+		return
+	end
+	s.data.autobuy = not s.data.autobuy
+	sendState(s)
+end)
+
+R.GoHome.OnServerEvent:Connect(function(player)
+	local s = sessions[player]
+	if s then
+		teleportHome(s)
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Прораб (автопокупка генераторов)
+--------------------------------------------------------------------------------
+local function autobuy(s: Session)
+	local d = s.data
+	if Config.pupLevel(d, "auto") < 1 or not d.autobuy then
+		return
+	end
+	local bought = 0
+	for _ = 1, 25 do
+		-- Выбираем самый выгодный генератор: прирост дохода / цена
+		local best, bestScore = nil, 0
+		local g = Config.globalMult(d)
+		for _, gen in ipairs(Config.Generators) do
+			local cost = Config.genCost(d, gen, 1)
+			if cost <= d.crystals then
+				local lvl = d.gens[gen.id] or 0
+				local now = Config.genProduction(d, gen, g)
+				d.gens[gen.id] = lvl + 1
+				local after = Config.genProduction(d, gen, g)
+				d.gens[gen.id] = lvl
+				local score = (after - now) / cost
+				if score > bestScore then
+					best, bestScore = gen, score
+				end
+			end
+		end
+		if not best then
+			break
+		end
+		if buyGen(s, best, 1) == 0 then
+			break
+		end
+		bought += 1
+	end
+	if bought > 0 then
+		recompute(s)
+		checkAchievements(s)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Главный цикл
+--------------------------------------------------------------------------------
+local TICK = 0.2
+local stateTimer = 0
+local plotTimer = 0
+local slowTimer = 0
+
+task.spawn(function()
+	while true do
+		local dt = task.wait(TICK)
+		stateTimer += dt
+		plotTimer += dt
+		slowTimer += dt
+		local now = os.clock()
+		for _, s in pairs(sessions) do
+			if s.player:GetAttribute("Loaded") then
+				s.clickBudget = math.min(MAX_CLICKS_PER_SEC, s.clickBudget + MAX_CLICKS_PER_SEC * dt)
+				s.data.playTime += dt
+				if s.frenzyLeft > 0 then
+					s.frenzyLeft = math.max(0, s.frenzyLeft - dt)
+					if s.frenzyLeft == 0 then
+						s.dirty = true
+					end
+				end
+				if s.stormLeft > 0 then
+					s.stormLeft = math.max(0, s.stormLeft - dt)
+				end
+				addCrystals(s, s.perSec * currentMult(s) * dt)
+
+				s.autoTimer += dt
+				if s.autoTimer >= 1 then
+					s.autoTimer = 0
+					autobuy(s)
+				end
+
+				-- Сверкающий кристалл
+				if not s.goldenToken and now >= s.nextGolden then
+					s.goldenToken = HttpService:GenerateGUID(false)
+					s.goldenExpire = now + Config.GoldenLifetime + 1
+					event(s, "goldenSpawn", s.goldenToken, Config.GoldenLifetime)
+				elseif s.goldenToken and now > s.goldenExpire then
+					s.goldenToken = nil
+					scheduleGolden(s)
+				end
+			end
+		end
+
+		if stateTimer >= 0.5 then
+			stateTimer = 0
+			for _, s in pairs(sessions) do
+				if s.player:GetAttribute("Loaded") then
+					sendState(s)
+					setLeaderstats(s)
+				end
+			end
+		end
+
+		if plotTimer >= 1 then
+			plotTimer = 0
+			for _, s in pairs(sessions) do
+				if s.player:GetAttribute("Loaded") then
+					checkAchievements(s)
+					if s.dirty then
+						s.dirty = false
+						recompute(s)
+					end
+					refreshPlot(s)
+				end
+			end
+		end
+
+		if slowTimer >= 90 then
+			slowTimer = 0
+			for player in pairs(sessions) do
+				task.spawn(save, player)
+			end
+			task.spawn(refreshLeaderboard)
+		end
+	end
+end)
+
+task.delay(5, refreshLeaderboard)
+]]></ProtectedString></Properties><Item class="ModuleScript" referent="RBX00000006"><Properties><string name="Name">World</string><ProtectedString name="Source"><![CDATA[-- Постройка мира: лобби, участки игроков, станции генераторов, табло рекордов.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+
+local World = {}
+
+World.PLOT_COUNT = 8
+World.PLOT_RADIUS = 200 -- расстояние от центра лобби до центра участка
+World.STATION_RING = 42 -- радиус кольца станций вокруг кристалла
+
+export type Plot = {
+	index: number,
+	model: Model,
+	center: Vector3,
+	crystal: BasePart,
+	spawnCFrame: CFrame,
+	ownerLabel: TextLabel,
+	stations: { [string]: Station },
+	owner: Player?,
+}
+
+export type Station = {
+	gen: any,
+	pad: BasePart,
+	padCFrame: CFrame,
+	build: Model?,
+	builtTier: number, -- -1 = не построена; иначе число пройденных рубежей
+	label: TextLabel,
+	subLabel: TextLabel,
+	beam: Beam?,
+}
+
+type PartSpec = {
+	shape: string?,
+	size: Vector3,
+	cf: CFrame,
+	color: Color3?,
+	material: Enum.Material?,
+	transparency: number?,
+}
+
+local function part(parent: Instance, props: { [string]: any }): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in pairs(props) do
+		(p :: any)[k] = v
+	end
+	p.Parent = parent
+	return p
+end
+
+local function billboard(parent: BasePart, size: UDim2, offset: Vector3, maxDistance: number?): BillboardGui
+	local bb = Instance.new("BillboardGui")
+	bb.Size = size
+	bb.StudsOffsetWorldSpace = offset
+	bb.AlwaysOnTop = false
+	bb.LightInfluence = 0
+	bb.MaxDistance = maxDistance or 200
+	bb.Adornee = parent
+	bb.Parent = parent
+	return bb
+end
+
+local function text(parent: Instance, props: { [string]: any }): TextLabel
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.TextScaled = true
+	t.Font = Enum.Font.FredokaOne
+	t.TextColor3 = Color3.new(1, 1, 1)
+	t.TextStrokeTransparency = 0.3
+	for k, v in pairs(props) do
+		(t :: any)[k] = v
+	end
+	t.Parent = parent
+	return t
+end
+
+--------------------------------------------------------------------------------
+-- Рецепты станций (по одному на генератор). Координаты относительно центра площадки,
+-- ось -Z смотрит на кристалл.
+--------------------------------------------------------------------------------
+local WOOD = Color3.fromRGB(120, 80, 50)
+local DARK = Color3.fromRGB(45, 42, 55)
+local METAL = Color3.fromRGB(150, 150, 165)
+
+local function A(x: number, y: number, z: number): CFrame
+	return CFrame.Angles(math.rad(x), math.rad(y), math.rad(z))
+end
+
+local RECIPES: { [string]: (Color3) -> { PartSpec } } = {
+	gnome = function(c)
+		return {
+			{ size = Vector3.new(6, 4, 6), cf = CFrame.new(0, 2, 0), color = WOOD, material = Enum.Material.WoodPlanks },
+			{ size = Vector3.new(7, 1, 7), cf = CFrame.new(0, 4.5, 0), color = Color3.fromRGB(200, 60, 50) },
+			{ size = Vector3.new(5, 1, 5), cf = CFrame.new(0, 5.5, 0), color = Color3.fromRGB(200, 60, 50) },
+			{ size = Vector3.new(3, 1, 3), cf = CFrame.new(0, 6.5, 0), color = Color3.fromRGB(200, 60, 50) },
+			{ size = Vector3.new(2, 3, 0.2), cf = CFrame.new(0, 1.5, -3.05), color = DARK },
+			-- гном
+			{ shape = "Ball", size = Vector3.new(1.6, 1.6, 1.6), cf = CFrame.new(3, 2.2, -4), color = Color3.fromRGB(255, 205, 170) },
+			{ size = Vector3.new(1.6, 1.8, 1.2), cf = CFrame.new(3, 0.9, -4), color = c },
+			{ size = Vector3.new(1.2, 1.4, 1.2), cf = CFrame.new(3, 3.4, -4) * A(0, 45, 0), color = Color3.fromRGB(200, 60, 50) },
+			{ size = Vector3.new(0.3, 2.5, 0.3), cf = CFrame.new(4.2, 1.5, -4) * A(0, 0, 30), color = WOOD },
+		}
+	end,
+	cart = function(c)
+		return {
+			{ size = Vector3.new(0.4, 0.4, 12), cf = CFrame.new(-1.5, 0.2, 0), color = METAL, material = Enum.Material.Metal },
+			{ size = Vector3.new(0.4, 0.4, 12), cf = CFrame.new(1.5, 0.2, 0), color = METAL, material = Enum.Material.Metal },
+			{ size = Vector3.new(4, 2.5, 5), cf = CFrame.new(0, 2, 0), color = WOOD, material = Enum.Material.WoodPlanks },
+			{ shape = "Cylinder", size = Vector3.new(0.5, 1.6, 1.6), cf = CFrame.new(-2.1, 0.8, -1.6), color = DARK },
+			{ shape = "Cylinder", size = Vector3.new(0.5, 1.6, 1.6), cf = CFrame.new(2.1, 0.8, -1.6), color = DARK },
+			{ shape = "Cylinder", size = Vector3.new(0.5, 1.6, 1.6), cf = CFrame.new(-2.1, 0.8, 1.6), color = DARK },
+			{ shape = "Cylinder", size = Vector3.new(0.5, 1.6, 1.6), cf = CFrame.new(2.1, 0.8, 1.6), color = DARK },
+			{ size = Vector3.new(1.2, 1.2, 1.2), cf = CFrame.new(-0.8, 3.6, -0.8) * A(45, 0, 35), color = Color3.fromRGB(70, 210, 255), material = Enum.Material.Neon },
+			{ size = Vector3.new(1, 1, 1), cf = CFrame.new(0.9, 3.5, 0.6) * A(30, 20, 45), color = Color3.fromRGB(255, 90, 200), material = Enum.Material.Neon },
+			{ size = Vector3.new(0.9, 0.9, 0.9), cf = CFrame.new(0.2, 3.5, 1.4) * A(10, 45, 30), color = c, material = Enum.Material.Neon },
+		}
+	end,
+	drill = function(c)
+		local list: { PartSpec } = {
+			{ size = Vector3.new(7, 1, 7), cf = CFrame.new(0, 0.5, 0), color = DARK, material = Enum.Material.DiamondPlate },
+			{ size = Vector3.new(6, 1, 6), cf = CFrame.new(0, 11, 0), color = c },
+			{ shape = "Cylinder", size = Vector3.new(9, 2.2, 2.2), cf = CFrame.new(0, 6, 0) * A(0, 0, 90), color = METAL, material = Enum.Material.Metal },
+			{ size = Vector3.new(1.5, 1.5, 1.5), cf = CFrame.new(0, 1.5, 0) * A(45, 0, 35), color = METAL, material = Enum.Material.Metal },
+		}
+		for _, p in ipairs({ { -2.6, -2.6 }, { 2.6, -2.6 }, { -2.6, 2.6 }, { 2.6, 2.6 } }) do
+			table.insert(list, { size = Vector3.new(0.6, 10, 0.6), cf = CFrame.new(p[1], 6, p[2]), color = c })
+		end
+		return list
+	end,
+	mine = function(c)
+		return {
+			{ size = Vector3.new(12, 7, 10), cf = CFrame.new(0, 3.5, 1), color = Color3.fromRGB(95, 90, 100), material = Enum.Material.Slate },
+			{ size = Vector3.new(8, 4, 8), cf = CFrame.new(1, 8, 2) * A(0, 20, 0), color = Color3.fromRGB(85, 80, 95), material = Enum.Material.Slate },
+			{ size = Vector3.new(4, 4.5, 0.4), cf = CFrame.new(0, 2.25, -4.1), color = Color3.fromRGB(10, 10, 15) },
+			{ size = Vector3.new(0.6, 5, 0.6), cf = CFrame.new(-2.3, 2.5, -4.4), color = WOOD },
+			{ size = Vector3.new(0.6, 5, 0.6), cf = CFrame.new(2.3, 2.5, -4.4), color = WOOD },
+			{ size = Vector3.new(5.6, 0.6, 0.6), cf = CFrame.new(0, 5, -4.4), color = WOOD },
+			{ size = Vector3.new(1.5, 1.5, 1.5), cf = CFrame.new(-4, 7.6, -1) * A(45, 10, 35), color = c, material = Enum.Material.Neon },
+			{ size = Vector3.new(1.2, 1.2, 1.2), cf = CFrame.new(4.5, 7.2, 0) * A(20, 45, 35), color = Color3.fromRGB(70, 210, 255), material = Enum.Material.Neon },
+		}
+	end,
+	smelter = function(c)
+		return {
+			{ size = Vector3.new(9, 6, 8), cf = CFrame.new(0, 3, 0), color = Color3.fromRGB(140, 60, 45), material = Enum.Material.Brick },
+			{ shape = "Cylinder", size = Vector3.new(10, 2.6, 2.6), cf = CFrame.new(2.5, 11, 2) * A(0, 0, 90), color = Color3.fromRGB(90, 50, 40), material = Enum.Material.Brick },
+			{ size = Vector3.new(4, 2.5, 0.3), cf = CFrame.new(-1, 2, -4.1), color = c, material = Enum.Material.Neon },
+			{ size = Vector3.new(10, 0.6, 9), cf = CFrame.new(0, 6.3, 0), color = DARK },
+		}
+	end,
+	laser = function(c)
+		return {
+			{ shape = "Cylinder", size = Vector3.new(2, 8, 8), cf = CFrame.new(0, 1, 0) * A(0, 0, 90), color = DARK, material = Enum.Material.DiamondPlate },
+			{ size = Vector3.new(3, 5, 3), cf = CFrame.new(0, 4.5, 0), color = METAL, material = Enum.Material.Metal },
+			{ shape = "Cylinder", size = Vector3.new(8, 1.6, 1.6), cf = CFrame.new(0, 8, -2.5) * A(0, 90, 0) * A(0, 0, 30), color = METAL, material = Enum.Material.Metal },
+			{ shape = "Ball", size = Vector3.new(1.4, 1.4, 1.4), cf = CFrame.new(0, 9.9, -5.9), color = c, material = Enum.Material.Neon },
+			{ size = Vector3.new(3.2, 1, 3.2), cf = CFrame.new(0, 7, 0), color = c, material = Enum.Material.Neon },
+		}
+	end,
+	portal = function(c)
+		local list: { PartSpec } = {
+			{ size = Vector3.new(10, 1, 4), cf = CFrame.new(0, 0.5, 0), color = DARK, material = Enum.Material.Slate },
+			{ shape = "Cylinder", size = Vector3.new(0.4, 8, 8), cf = CFrame.new(0, 6, 0) * A(0, 90, 0), color = c, material = Enum.Material.Neon, transparency = 0.25 },
+		}
+		for i = 0, 9 do
+			local a = i / 10 * math.pi * 2
+			table.insert(list, {
+				size = Vector3.new(1.4, 2.6, 1.4),
+				cf = CFrame.new(math.cos(a) * 4.8, 6 + math.sin(a) * 4.8, 0) * A(0, 0, math.deg(a)),
+				color = Color3.fromRGB(60, 55, 75),
+				material = Enum.Material.Slate,
+			})
+		end
+		return list
+	end,
+	dragon = function(c)
+		return {
+			{ size = Vector3.new(4, 3.5, 9), cf = CFrame.new(0, 3.5, 1), color = c, material = Enum.Material.Glass },
+			{ size = Vector3.new(2, 2, 5), cf = CFrame.new(0, 6, -4.5) * A(40, 0, 0), color = c, material = Enum.Material.Glass },
+			{ size = Vector3.new(2.6, 2, 3.2), cf = CFrame.new(0, 7.8, -7.4), color = c, material = Enum.Material.Glass },
+			{ size = Vector3.new(0.6, 0.6, 0.6), cf = CFrame.new(-0.8, 8.4, -9), color = Color3.fromRGB(255, 240, 80), material = Enum.Material.Neon },
+			{ size = Vector3.new(0.6, 0.6, 0.6), cf = CFrame.new(0.8, 8.4, -9), color = Color3.fromRGB(255, 240, 80), material = Enum.Material.Neon },
+			{ size = Vector3.new(8, 0.3, 5), cf = CFrame.new(-5, 6, 1) * A(0, 0, 25), color = c, material = Enum.Material.Neon, transparency = 0.3 },
+			{ size = Vector3.new(8, 0.3, 5), cf = CFrame.new(5, 6, 1) * A(0, 0, -25), color = c, material = Enum.Material.Neon, transparency = 0.3 },
+			{ size = Vector3.new(1.4, 1.4, 6), cf = CFrame.new(0, 2.5, 7.5) * A(-20, 0, 0), color = c, material = Enum.Material.Glass },
+			{ size = Vector3.new(1, 2.5, 1), cf = CFrame.new(-1.4, 1.25, -1.5), color = c, material = Enum.Material.Glass },
+			{ size = Vector3.new(1, 2.5, 1), cf = CFrame.new(1.4, 1.25, -1.5), color = c, material = Enum.Material.Glass },
+			{ size = Vector3.new(1, 2.5, 1), cf = CFrame.new(-1.4, 1.25, 3.5), color = c, material = Enum.Material.Glass },
+			{ size = Vector3.new(1, 2.5, 1), cf = CFrame.new(1.4, 1.25, 3.5), color = c, material = Enum.Material.Glass },
+		}
+	end,
+	forge = function(c)
+		return {
+			{ size = Vector3.new(8, 1, 8), cf = CFrame.new(0, 0.5, 0), color = DARK, material = Enum.Material.DiamondPlate },
+			{ size = Vector3.new(3, 3, 2.4), cf = CFrame.new(0, 2.5, 0), color = METAL, material = Enum.Material.Metal },
+			{ size = Vector3.new(6, 1.4, 3), cf = CFrame.new(0.6, 4.7, 0), color = METAL, material = Enum.Material.Metal },
+			{ shape = "Ball", size = Vector3.new(4, 4, 4), cf = CFrame.new(0, 10, 0), color = c, material = Enum.Material.Neon },
+			{ size = Vector3.new(6.5, 0.5, 0.5), cf = CFrame.new(0, 10, 0) * A(0, 0, 45), color = c, material = Enum.Material.Neon },
+			{ size = Vector3.new(6.5, 0.5, 0.5), cf = CFrame.new(0, 10, 0) * A(0, 0, -45), color = c, material = Enum.Material.Neon },
+			{ size = Vector3.new(6.5, 0.5, 0.5), cf = CFrame.new(0, 10, 0) * A(0, 90, 45), color = c, material = Enum.Material.Neon },
+		}
+	end,
+	hole = function(c)
+		return {
+			{ size = Vector3.new(9, 1, 9), cf = CFrame.new(0, 0.5, 0), color = DARK, material = Enum.Material.Slate },
+			{ shape = "Ball", size = Vector3.new(7, 7, 7), cf = CFrame.new(0, 8, 0), color = Color3.new(0, 0, 0), material = Enum.Material.SmoothPlastic },
+			{ shape = "Cylinder", size = Vector3.new(0.3, 12, 12), cf = CFrame.new(0, 8, 0) * A(0, 0, 90) * A(20, 0, 0), color = c, material = Enum.Material.Neon, transparency = 0.2 },
+			{ shape = "Cylinder", size = Vector3.new(0.3, 10, 10), cf = CFrame.new(0, 8, 0) * A(70, 0, 0), color = Color3.fromRGB(255, 120, 220), material = Enum.Material.Neon, transparency = 0.3 },
+		}
+	end,
+}
+
+local function buildStationModel(gen, padCFrame: CFrame, tier: number): Model
+	local model = Instance.new("Model")
+	model.Name = "Station"
+	local recipe = RECIPES[gen.id]
+	for _, spec in ipairs(recipe(gen.color)) do
+		local p = part(model, {
+			Size = spec.size,
+			CFrame = padCFrame * spec.cf,
+			Color = spec.color or gen.color,
+			Material = spec.material or Enum.Material.SmoothPlastic,
+			Transparency = spec.transparency or 0,
+			CanCollide = false,
+			CastShadow = false,
+		})
+		if spec.shape == "Ball" then
+			p.Shape = Enum.PartType.Ball
+		elseif spec.shape == "Cylinder" then
+			p.Shape = Enum.PartType.Cylinder
+		end
+	end
+	model.WorldPivot = padCFrame
+	-- Чем больше рубежей пройдено, тем крупнее постройка
+	local scale = 1 + 0.12 * math.min(tier, 10)
+	if scale ~= 1 then
+		model:ScaleTo(scale)
+	end
+	return model
+end
+
+--------------------------------------------------------------------------------
+-- Участок
+--------------------------------------------------------------------------------
+local PLOT_COLORS = {
+	Color3.fromRGB(70, 210, 255),
+	Color3.fromRGB(255, 100, 200),
+	Color3.fromRGB(90, 255, 150),
+	Color3.fromRGB(255, 200, 70),
+	Color3.fromRGB(160, 120, 255),
+	Color3.fromRGB(255, 120, 90),
+	Color3.fromRGB(80, 255, 230),
+	Color3.fromRGB(230, 230, 255),
+}
+
+local function buildPlot(index: number, parent: Instance): Plot
+	local angle = (index - 1) / World.PLOT_COUNT * math.pi * 2
+	local center = Vector3.new(math.cos(angle) * World.PLOT_RADIUS, 0, math.sin(angle) * World.PLOT_RADIUS)
+	local toLobby = (Vector3.zero - center).Unit
+	local accent = PLOT_COLORS[(index - 1) % #PLOT_COLORS + 1]
+
+	local model = Instance.new("Model")
+	model.Name = "Plot" .. index
+
+	part(model, {
+		Name = "Floor",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(1, 136, 136),
+		CFrame = CFrame.new(center + Vector3.new(0, 0.5, 0)) * A(0, 0, 90),
+		Color = Color3.fromRGB(38, 34, 52),
+		Material = Enum.Material.Slate,
+	})
+	part(model, {
+		Name = "Rim",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(0.9, 138, 138),
+		CFrame = CFrame.new(center + Vector3.new(0, 0.45, 0)) * A(0, 0, 90),
+		Color = accent,
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+	})
+	-- Дорожка к лобби
+	local pathStart = center + toLobby * 66
+	local pathEnd = toLobby * 40
+	local pathLen = (pathEnd - pathStart).Magnitude
+	part(model, {
+		Name = "Path",
+		Size = Vector3.new(10, 0.6, pathLen),
+		CFrame = CFrame.lookAt((pathStart + pathEnd) / 2 + Vector3.new(0, 0.3, 0), pathEnd + Vector3.new(0, 0.3, 0)),
+		Color = Color3.fromRGB(60, 55, 80),
+		Material = Enum.Material.Cobblestone,
+	})
+
+	-- Пьедестал и главный кристалл
+	part(model, {
+		Name = "Pedestal",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(3, 20, 20),
+		CFrame = CFrame.new(center + Vector3.new(0, 2, 0)) * A(0, 0, 90),
+		Color = Color3.fromRGB(50, 45, 70),
+		Material = Enum.Material.Slate,
+	})
+	part(model, {
+		Name = "PedestalGlow",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(0.3, 21, 21),
+		CFrame = CFrame.new(center + Vector3.new(0, 3.6, 0)) * A(0, 0, 90),
+		Color = accent,
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+	})
+
+	local crystalPos = center + Vector3.new(0, 13, 0)
+	local crystal = part(model, {
+		Name = "Crystal",
+		Size = Vector3.new(9, 9, 9),
+		CFrame = CFrame.new(crystalPos) * A(45, 0, 35.264),
+		Color = accent,
+		Material = Enum.Material.Glass,
+		Transparency = 0.15,
+		Reflectance = 0.2,
+	})
+	crystal:SetAttribute("BasePos", crystalPos)
+	part(crystal, {
+		Name = "Core",
+		Size = Vector3.new(5.5, 5.5, 5.5),
+		CFrame = crystal.CFrame,
+		Color = accent:Lerp(Color3.new(1, 1, 1), 0.5),
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+	})
+	local light = Instance.new("PointLight")
+	light.Color = accent
+	light.Range = 40
+	light.Brightness = 3
+	light.Parent = crystal
+	local detector = Instance.new("ClickDetector")
+	detector.MaxActivationDistance = 150
+	detector.Parent = crystal
+	local sparkles = Instance.new("ParticleEmitter")
+	sparkles.Name = "Sparkles"
+	sparkles.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	sparkles.Color = ColorSequence.new(accent:Lerp(Color3.new(1, 1, 1), 0.4))
+	sparkles.Size = NumberSequence.new(0.7, 0)
+	sparkles.Lifetime = NumberRange.new(1, 2)
+	sparkles.Rate = 4
+	sparkles.Speed = NumberRange.new(3, 6)
+	sparkles.SpreadAngle = Vector2.new(180, 180)
+	sparkles.LightEmission = 1
+	sparkles.Parent = crystal
+	local crystalAttachment = Instance.new("Attachment")
+	crystalAttachment.Name = "BeamTarget"
+	crystalAttachment.Parent = crystal
+
+	local ownerBB = billboard(crystal, UDim2.fromOffset(420, 70), Vector3.new(0, 11, 0), 400)
+	ownerBB.AlwaysOnTop = true
+	local ownerLabel = text(ownerBB, { Size = UDim2.fromScale(1, 1), Text = "Свободный участок" })
+
+	-- Точка появления: у края участка со стороны лобби, лицом к кристаллу
+	local spawnPos = center + toLobby * 56 + Vector3.new(0, 4, 0)
+	local spawnCFrame = CFrame.lookAt(spawnPos, Vector3.new(center.X, spawnPos.Y, center.Z))
+
+	local plot: Plot = {
+		index = index,
+		model = model,
+		center = center,
+		crystal = crystal,
+		spawnCFrame = spawnCFrame,
+		ownerLabel = ownerLabel,
+		stations = {},
+		owner = nil,
+	}
+
+	-- Площадки станций по кругу. Первая — ближе всех к точке появления.
+	local baseAngle = math.atan2(toLobby.Z, toLobby.X)
+	local n = #Config.Generators
+	for i, gen in ipairs(Config.Generators) do
+		-- раскладываем от тропинки по часовой стрелке, оставив проход
+		local a = baseAngle + math.rad(25) + (i - 1) / n * math.rad(310)
+		local padPos = center + Vector3.new(math.cos(a) * World.STATION_RING, 1, math.sin(a) * World.STATION_RING)
+		local padCFrame = CFrame.lookAt(padPos, Vector3.new(center.X, padPos.Y, center.Z))
+		local pad = part(model, {
+			Name = "Pad_" .. gen.id,
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.6, 16, 16),
+			CFrame = padCFrame * A(0, 0, 90),
+			Color = Color3.fromRGB(60, 56, 78),
+			Material = Enum.Material.DiamondPlate,
+		})
+		part(model, {
+			Name = "PadRing",
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(0.5, 16.8, 16.8),
+			CFrame = padCFrame * CFrame.new(0, -0.08, 0) * A(0, 0, 90),
+			Color = gen.color,
+			Material = Enum.Material.Neon,
+			Transparency = 0.5,
+			CanCollide = false,
+		})
+		local bb = billboard(pad, UDim2.fromOffset(260, 80), Vector3.new(0, 9, 0), 160)
+		local label = text(bb, { Size = UDim2.new(1, 0, 0.55, 0), Text = "🔒 " .. gen.name })
+		local sub = text(bb, {
+			Size = UDim2.new(1, 0, 0.42, 0),
+			Position = UDim2.fromScale(0, 0.58),
+			Text = "Купи в магазине",
+			TextColor3 = Color3.fromRGB(200, 200, 220),
+			Font = Enum.Font.GothamBold,
+		})
+		plot.stations[gen.id] = {
+			gen = gen,
+			pad = pad,
+			padCFrame = padCFrame * CFrame.new(0, 0.3, 0),
+			build = nil,
+			builtTier = -1,
+			label = label,
+			subLabel = sub,
+			beam = nil,
+		}
+	end
+
+	model.Parent = parent
+	return plot
+end
+
+-- Обновить постройку станции под текущий уровень
+function World.updateStation(plot: Plot, genId: string, level: number, production: number)
+	local st = plot.stations[genId]
+	if not st then
+		return
+	end
+	local tier = level > 0 and Config.milestonesReached(level) or -1
+	if tier ~= st.builtTier then
+		st.builtTier = tier
+		if st.build then
+			st.build:Destroy()
+			st.build = nil
+		end
+		if st.beam then
+			st.beam:Destroy()
+			st.beam = nil
+		end
+		if tier >= 0 then
+			local m = buildStationModel(st.gen, st.padCFrame, tier)
+			m.Parent = plot.model
+			st.build = m
+			-- Луч добычи к кристаллу
+			local att = Instance.new("Attachment")
+			att.Name = "BeamSource"
+			att.Parent = st.pad
+			att.WorldPosition = st.padCFrame.Position + Vector3.new(0, 6 + tier, 0)
+			local beam = Instance.new("Beam")
+			beam.Attachment0 = att
+			beam.Attachment1 = plot.crystal:FindFirstChild("BeamTarget") :: Attachment
+			beam.Color = ColorSequence.new(st.gen.color)
+			beam.LightEmission = 1
+			beam.FaceCamera = true
+			beam.Width0 = 0.3 + 0.12 * tier
+			beam.Width1 = 0.15
+			beam.Transparency = NumberSequence.new(0.2, 0.6)
+			beam.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+			beam.TextureMode = Enum.TextureMode.Wrap
+			beam.TextureLength = 3
+			beam.TextureSpeed = 1 + tier * 0.3
+			beam.Segments = 1
+			beam.Parent = att
+			st.beam = beam
+		end
+	end
+	if level > 0 then
+		st.label.Text = string.format("%s %s", st.gen.icon, st.gen.name)
+		st.subLabel.Text = string.format("Ур. %d · +%s/с", level, Config.format(production))
+	else
+		st.label.Text = "🔒 " .. st.gen.name
+		st.subLabel.Text = "Купи в магазине"
+	end
+end
+
+function World.resetPlot(plot: Plot)
+	for id in pairs(plot.stations) do
+		World.updateStation(plot, id, 0, 0)
+	end
+	plot.ownerLabel.Text = "Свободный участок"
+	local sparkles = plot.crystal:FindFirstChild("Sparkles") :: ParticleEmitter?
+	if sparkles then
+		sparkles.Rate = 4
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Лобби и табло
+--------------------------------------------------------------------------------
+local leaderRows: { TextLabel } = {}
+
+local function buildLobby(parent: Instance)
+	local lobby = Instance.new("Model")
+	lobby.Name = "Lobby"
+	part(lobby, {
+		Name = "LobbyFloor",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(1, 80, 80),
+		CFrame = CFrame.new(0, 0.5, 0) * A(0, 0, 90),
+		Color = Color3.fromRGB(55, 50, 75),
+		Material = Enum.Material.Marble,
+	})
+	part(lobby, {
+		Name = "LobbyRim",
+		Shape = Enum.PartType.Cylinder,
+		Size = Vector3.new(0.9, 82, 82),
+		CFrame = CFrame.new(0, 0.45, 0) * A(0, 0, 90),
+		Color = Color3.fromRGB(255, 205, 60),
+		Material = Enum.Material.Neon,
+		CanCollide = false,
+	})
+
+	-- Табло рекордов
+	local board = part(lobby, {
+		Name = "Leaderboard",
+		Size = Vector3.new(26, 22, 1),
+		CFrame = CFrame.new(0, 13, 22),
+		Color = Color3.fromRGB(25, 22, 40),
+		Material = Enum.Material.SmoothPlastic,
+	})
+	part(lobby, { Size = Vector3.new(1.2, 14, 1.2), CFrame = CFrame.new(-10, 7, 22.8), Color = Color3.fromRGB(60, 55, 80) })
+	part(lobby, { Size = Vector3.new(1.2, 14, 1.2), CFrame = CFrame.new(10, 7, 22.8), Color = Color3.fromRGB(60, 55, 80) })
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Front
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	sg.PixelsPerStud = 30
+	sg.LightInfluence = 0
+	sg.Parent = board
+	text(sg, {
+		Size = UDim2.new(1, 0, 0, 90),
+		Text = "🏆 Самые богатые империи",
+		TextColor3 = Color3.fromRGB(255, 205, 60),
+	})
+	for i = 1, 10 do
+		local row = text(sg, {
+			Size = UDim2.new(1, -40, 0, 50),
+			Position = UDim2.fromOffset(20, 95 + (i - 1) * 56),
+			Text = "",
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Font = Enum.Font.GothamBold,
+		})
+		leaderRows[i] = row
+	end
+	leaderRows[1].Text = "Загрузка…"
+
+	-- Название
+	local sign = part(lobby, {
+		Name = "Title",
+		Size = Vector3.new(1, 1, 1),
+		CFrame = CFrame.new(0, 26, 22),
+		Transparency = 1,
+		CanCollide = false,
+	})
+	local bb = billboard(sign, UDim2.fromOffset(700, 110), Vector3.zero, 500)
+	text(bb, { Size = UDim2.fromScale(1, 1), Text = "💎 КРИСТАЛЬНАЯ ИМПЕРИЯ", TextColor3 = Color3.fromRGB(150, 235, 255) })
+
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "LobbySpawn"
+	spawn.Anchored = true
+	spawn.Size = Vector3.new(10, 1, 10)
+	spawn.CFrame = CFrame.new(0, 1, -10)
+	spawn.Color = Color3.fromRGB(70, 210, 255)
+	spawn.Material = Enum.Material.Neon
+	spawn.Duration = 0
+	spawn.TopSurface = Enum.SurfaceType.Smooth
+	spawn.Parent = lobby
+
+	lobby.Parent = parent
+end
+
+function World.setLeaderboard(rows: { { name: string, value: number } })
+	for i = 1, 10 do
+		local r = rows[i]
+		if r then
+			local medal = i == 1 and "🥇" or i == 2 and "🥈" or i == 3 and "🥉" or (i .. ".")
+			leaderRows[i].Text = string.format("%s %s — 💎 %s", medal, r.name, Config.format(r.value))
+		else
+			leaderRows[i].Text = i == 1 and "Пока пусто — стань первым!" or ""
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Россыпь декоративных кристаллов между участками
+--------------------------------------------------------------------------------
+local function scatter(parent: Instance)
+	local folder = Instance.new("Folder")
+	folder.Name = "Decor"
+	local rng = Random.new(7)
+	local palette = { Color3.fromRGB(255, 90, 200), Color3.fromRGB(90, 255, 150), Color3.fromRGB(255, 210, 70), Color3.fromRGB(140, 110, 255), Color3.fromRGB(70, 210, 255) }
+	local placed = 0
+	local tries = 0
+	while placed < 120 and tries < 2000 do
+		tries += 1
+		local pos = Vector3.new(rng:NextNumber(-380, 380), 0, rng:NextNumber(-380, 380))
+		local ok = pos.Magnitude > 50
+		for i = 1, World.PLOT_COUNT do
+			local a = (i - 1) / World.PLOT_COUNT * math.pi * 2
+			local c = Vector3.new(math.cos(a) * World.PLOT_RADIUS, 0, math.sin(a) * World.PLOT_RADIUS)
+			if (pos - c).Magnitude < 75 then
+				ok = false
+			end
+		end
+		if ok then
+			placed += 1
+			local s = rng:NextNumber(2, 7)
+			part(folder, {
+				Name = "Shard",
+				Size = Vector3.new(s * 0.6, s * 2, s * 0.6),
+				CFrame = CFrame.new(pos + Vector3.new(0, s * 0.6, 0)) * A(rng:NextNumber(-20, 20), rng:NextNumber(0, 360), rng:NextNumber(-20, 20)),
+				Color = palette[rng:NextInteger(1, #palette)],
+				Material = Enum.Material.Neon,
+				CastShadow = false,
+			})
+		end
+	end
+	folder.Parent = parent
+end
+
+--------------------------------------------------------------------------------
+function World.build(): { Plot }
+	Lighting.ClockTime = 20
+	Lighting.Brightness = 1.2
+	Lighting.Ambient = Color3.fromRGB(70, 60, 100)
+	Lighting.OutdoorAmbient = Color3.fromRGB(90, 80, 140)
+	Lighting.EnvironmentDiffuseScale = 0.5
+	local bloom = Instance.new("BloomEffect")
+	bloom.Intensity = 0.7
+	bloom.Size = 28
+	bloom.Threshold = 1.4
+	bloom.Parent = Lighting
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Saturation = 0.15
+	cc.Contrast = 0.08
+	cc.Parent = Lighting
+	local atmo = Instance.new("Atmosphere")
+	atmo.Density = 0.3
+	atmo.Color = Color3.fromRGB(120, 100, 170)
+	atmo.Decay = Color3.fromRGB(60, 40, 100)
+	atmo.Glare = 0.2
+	atmo.Haze = 1.5
+	atmo.Parent = Lighting
+
+	local root = Instance.new("Folder")
+	root.Name = "Empire"
+	buildLobby(root)
+	scatter(root)
+	local plotsFolder = Instance.new("Folder")
+	plotsFolder.Name = "Plots"
+	plotsFolder.Parent = root
+	local plots = {}
+	for i = 1, World.PLOT_COUNT do
+		plots[i] = buildPlot(i, plotsFolder)
+	end
+	root.Parent = workspace
+	return plots
+end
+
+return World
+]]></ProtectedString></Properties></Item></Item>
+</Item>
+<Item class="StarterPlayer" referent="RBX00000008"><Properties><string name="Name">StarterPlayer</string></Properties>
+<Item class="StarterPlayerScripts" referent="RBX00000009"><Properties><string name="Name">StarterPlayerScripts</string></Properties>
+<Item class="LocalScript" referent="RBX0000000A"><Properties><string name="Name">GameClient</string><ProtectedString name="Source"><![CDATA[-- Клиент «Кристальной империи»: интерфейс, анимации, бонусы.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local function R(name: string): RemoteEvent
+	return Remotes:WaitForChild(name) :: RemoteEvent
+end
+local ClickR, BuyGenR, BuyUpR, BuyAllUpsR, BuyPUpR = R("Click"), R("BuyGen"), R("BuyUp"), R("BuyAllUps"), R("BuyPUp")
+local RebirthR, ClaimGoldenR, ToggleAutoR, GoHomeR = R("Rebirth"), R("ClaimGolden"), R("ToggleAuto"), R("GoHome")
+local StateR, EventR = R("State"), R("Event")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
+
+--------------------------------------------------------------------------------
+-- Состояние (приходит с сервера)
+--------------------------------------------------------------------------------
+local state: Config.Data = Config.newData()
+local perSec = 0
+local clickValue = 1
+local frenzyLeft = 0
+local stormLeft = 0
+local stateTime = os.clock()
+local hasState = false
+
+local function mult(): number
+	return frenzyLeft > 0 and Config.FrenzyMult or 1
+end
+
+-- Плавный счётчик: прибавляем доход между снимками сервера
+local function crystalsNow(): number
+	return state.crystals + perSec * mult() * math.min(os.clock() - stateTime, 1.5)
+end
+
+--------------------------------------------------------------------------------
+-- Утилиты интерфейса
+--------------------------------------------------------------------------------
+local BG = Color3.fromRGB(22, 20, 36)
+local PANEL = Color3.fromRGB(30, 27, 48)
+local CARD = Color3.fromRGB(42, 38, 66)
+local CARD_DIM = Color3.fromRGB(34, 31, 52)
+local ACCENT = Color3.fromRGB(70, 210, 255)
+local GOOD = Color3.fromRGB(50, 190, 100)
+local BAD = Color3.fromRGB(80, 76, 100)
+local GOLD = Color3.fromRGB(255, 205, 60)
+local PINK = Color3.fromRGB(255, 100, 200)
+local MUTED = Color3.fromRGB(180, 178, 205)
+local WHITE = Color3.new(1, 1, 1)
+
+local function new(className: string, props: { [string]: any }, children: { Instance }?): any
+	local inst = Instance.new(className)
+	for k, v in pairs(props) do
+		if k ~= "Parent" then
+			(inst :: any)[k] = v
+		end
+	end
+	if children then
+		for _, c in ipairs(children) do
+			c.Parent = inst
+		end
+	end
+	if props.Parent then
+		inst.Parent = props.Parent
+	end
+	return inst
+end
+
+local function corner(r: number?): any
+	return new("UICorner", { CornerRadius = UDim.new(0, r or 12) })
+end
+
+local function stroke(color: Color3, thickness: number?, transparency: number?): any
+	return new("UIStroke", {
+		Color = color,
+		Thickness = thickness or 2,
+		Transparency = transparency or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
+end
+
+local function label(props: { [string]: any }): TextLabel
+	if props.BackgroundTransparency == nil then
+		props.BackgroundTransparency = 1
+	end
+	props.Font = props.Font or Enum.Font.GothamBold
+	props.TextColor3 = props.TextColor3 or WHITE
+	return new("TextLabel", props)
+end
+
+local function button(props: { [string]: any }, children: { Instance }?): TextButton
+	props.Font = props.Font or Enum.Font.GothamBold
+	props.TextColor3 = props.TextColor3 or WHITE
+	props.AutoButtonColor = true
+	return new("TextButton", props, children)
+end
+
+local function playSound(id: string, volume: number, pitch: number?)
+	local s = new("Sound", { SoundId = id, Volume = volume, PlaybackSpeed = pitch or 1, Parent = SoundService })
+	s:Play()
+	task.delay(4, function()
+		s:Destroy()
+	end)
+end
+local SND_CLICK = "rbxasset://sounds/electronicpingshort.wav"
+local SND_BUY = "rbxasset://sounds/button.wav"
+local SND_WIN = "rbxasset://sounds/victory.wav"
+
+local function pop(inst: GuiObject, scaleFrom: number?)
+	local sc = inst:FindFirstChildOfClass("UIScale") or new("UIScale", { Parent = inst })
+	sc.Scale = scaleFrom or 0.9
+	TweenService:Create(sc, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+end
+
+--------------------------------------------------------------------------------
+-- Корневой ScreenGui
+--------------------------------------------------------------------------------
+local gui = new("ScreenGui", {
+	Name = "EmpireUI",
+	ResetOnSpawn = false,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	Parent = playerGui,
+})
+
+local uiScale = new("UIScale", { Parent = gui })
+local function updateScale()
+	local cam = workspace.CurrentCamera
+	if cam then
+		uiScale.Scale = math.clamp(math.min(cam.ViewportSize.Y / 950, cam.ViewportSize.X / 1500), 0.55, 1.15)
+	end
+end
+updateScale()
+local cam0 = workspace.CurrentCamera
+if cam0 then
+	cam0:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
+end
+
+--------------------------------------------------------------------------------
+-- HUD сверху
+--------------------------------------------------------------------------------
+local hud = new("Frame", {
+	Name = "HUD",
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 8),
+	Size = UDim2.fromOffset(460, 104),
+	BackgroundColor3 = BG,
+	BackgroundTransparency = 0.12,
+	Parent = gui,
+}, { corner(18), stroke(ACCENT, 2) })
+
+local balanceLabel = label({
+	Size = UDim2.new(1, -20, 0, 54),
+	Position = UDim2.fromOffset(10, 4),
+	Text = "💎 0",
+	TextScaled = true,
+	Font = Enum.Font.FredokaOne,
+	TextColor3 = ACCENT,
+	Parent = hud,
+})
+local rateLabel = label({
+	Size = UDim2.new(1, -20, 0, 22),
+	Position = UDim2.fromOffset(10, 56),
+	Text = "",
+	TextSize = 19,
+	Parent = hud,
+})
+local bonusLabel = label({
+	Size = UDim2.new(1, -20, 0, 20),
+	Position = UDim2.fromOffset(10, 80),
+	Text = "",
+	TextSize = 15,
+	Font = Enum.Font.Gotham,
+	TextColor3 = GOLD,
+	Parent = hud,
+})
+
+-- Полоски активных бонусов
+local boostFrame = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 118),
+	Size = UDim2.fromOffset(460, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1,
+	Parent = gui,
+}, { new("UIListLayout", { Padding = UDim.new(0, 4), HorizontalAlignment = Enum.HorizontalAlignment.Center }) })
+
+local function makeBoostBar(color: Color3): (Frame, Frame, TextLabel)
+	local bar = new("Frame", {
+		Size = UDim2.fromOffset(380, 30),
+		BackgroundColor3 = BG,
+		BackgroundTransparency = 0.1,
+		Visible = false,
+		Parent = boostFrame,
+	}, { corner(10), stroke(color, 2) })
+	local fill = new("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = color,
+		BackgroundTransparency = 0.45,
+		Parent = bar,
+	}, { corner(10) })
+	local t = label({ Size = UDim2.fromScale(1, 1), Text = "", TextSize = 17, Font = Enum.Font.FredokaOne, ZIndex = 2, Parent = bar })
+	return bar, fill, t
+end
+local frenzyBar, frenzyFill, frenzyText = makeBoostBar(GOLD)
+local stormBar, stormFill, stormText = makeBoostBar(PINK)
+local frenzyMax, stormMax = 30, 15
+
+--------------------------------------------------------------------------------
+-- Кнопки слева
+--------------------------------------------------------------------------------
+local leftBar = new("Frame", {
+	AnchorPoint = Vector2.new(0, 0.5),
+	Position = UDim2.new(0, 10, 0.5, 0),
+	Size = UDim2.fromOffset(64, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1,
+	Parent = gui,
+}, { new("UIListLayout", { Padding = UDim.new(0, 8) }) })
+
+local function sideButton(icon: string, caption: string): TextButton
+	local b = button({
+		Size = UDim2.fromOffset(64, 64),
+		BackgroundColor3 = PANEL,
+		Text = "",
+		Parent = leftBar,
+	}, { corner(14), stroke(ACCENT, 1.5, 0.3) })
+	label({ Size = UDim2.new(1, 0, 0, 38), Position = UDim2.fromOffset(0, 4), Text = icon, TextSize = 28, Parent = b })
+	label({ Size = UDim2.new(1, 0, 0, 16), Position = UDim2.fromOffset(0, 42), Text = caption, TextSize = 11, TextColor3 = MUTED, Parent = b })
+	return b
+end
+local homeButton = sideButton("🏠", "Домой")
+local shopButton = sideButton("🛒", "Магазин")
+
+--------------------------------------------------------------------------------
+-- Кнопка добычи
+--------------------------------------------------------------------------------
+local mineButton = button({
+	Name = "Mine",
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -20),
+	Size = UDim2.fromOffset(210, 66),
+	BackgroundColor3 = ACCENT,
+	Text = "⛏ ДОБЫТЬ",
+	Font = Enum.Font.FredokaOne,
+	TextSize = 30,
+	TextColor3 = Color3.fromRGB(15, 25, 45),
+	Parent = gui,
+}, { corner(18), stroke(WHITE, 3) })
+local mineSub = label({
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -88),
+	Size = UDim2.fromOffset(300, 20),
+	Text = "",
+	TextSize = 15,
+	TextStrokeTransparency = 0.4,
+	Parent = gui,
+})
+
+--------------------------------------------------------------------------------
+-- Магазин (правая панель с вкладками)
+--------------------------------------------------------------------------------
+local shop = new("Frame", {
+	Name = "Shop",
+	AnchorPoint = Vector2.new(1, 0.5),
+	Position = UDim2.new(1, -10, 0.5, 0),
+	Size = UDim2.fromOffset(400, 640),
+	BackgroundColor3 = BG,
+	BackgroundTransparency = 0.08,
+	Parent = gui,
+}, { corner(18), stroke(ACCENT, 2) })
+
+local tabsBar = new("Frame", {
+	Position = UDim2.fromOffset(8, 8),
+	Size = UDim2.new(1, -16, 0, 44),
+	BackgroundTransparency = 1,
+	Parent = shop,
+}, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }),
+})
+
+local content = new("Frame", {
+	Position = UDim2.fromOffset(8, 58),
+	Size = UDim2.new(1, -16, 1, -66),
+	BackgroundTransparency = 1,
+	ClipsDescendants = true,
+	Parent = shop,
+})
+
+type Tab = { button: TextButton, page: Frame, badge: TextLabel }
+local tabs: { [string]: Tab } = {}
+local currentTab = "gens"
+
+local function selectTab(id: string)
+	currentTab = id
+	for tid, t in pairs(tabs) do
+		local on = tid == id
+		t.page.Visible = on
+		t.button.BackgroundColor3 = on and ACCENT or PANEL
+		t.button.TextColor3 = on and Color3.fromRGB(15, 25, 45) or WHITE
+	end
+end
+
+local function addTab(id: string, title: string): Frame
+	local b = button({
+		Size = UDim2.new(0.25, -5, 1, 0),
+		BackgroundColor3 = PANEL,
+		Text = title,
+		TextSize = 15,
+		Parent = tabsBar,
+	}, { corner(10) })
+	local badge = label({
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 4, 0, -6),
+		Size = UDim2.fromOffset(22, 22),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = PINK,
+		Text = "!",
+		TextSize = 14,
+		Visible = false,
+		ZIndex = 3,
+		Parent = b,
+	})
+	corner(11).Parent = badge
+	local page = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false, Parent = content })
+	tabs[id] = { button = b, page = page, badge = badge }
+	b.Activated:Connect(function()
+		selectTab(id)
+		playSound(SND_BUY, 0.2, 1.4)
+	end)
+	return page
+end
+
+local function scroller(parent: Instance, top: number): ScrollingFrame
+	return new("ScrollingFrame", {
+		Position = UDim2.fromOffset(0, top),
+		Size = UDim2.new(1, 0, 1, -top),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 6,
+		ScrollBarImageColor3 = ACCENT,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Parent = parent,
+	}, {
+		new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+		new("UIPadding", { PaddingRight = UDim.new(0, 10), PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2) }),
+	})
+end
+
+local function progressBar(parent: Instance, pos: UDim2, size: UDim2, color: Color3): (Frame, Frame)
+	local bg = new("Frame", { Position = pos, Size = size, BackgroundColor3 = Color3.fromRGB(20, 18, 32), Parent = parent }, { corner(4) })
+	local fill = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = color, Parent = bg }, { corner(4) })
+	return bg, fill
+end
+
+--------------------------------------------------------------------------------
+-- Вкладка «Генераторы»
+--------------------------------------------------------------------------------
+local gensPage = addTab("gens", "⚙ Добыча")
+local buyMode: any = 1
+local modeButtons: { [any]: TextButton } = {}
+local modeBar = new("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1, Parent = gensPage }, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }),
+})
+for _, m in ipairs({ 1, 10, 100, "max" } :: { any }) do
+	local b = button({
+		Size = UDim2.new(0.25, -5, 1, 0),
+		BackgroundColor3 = PANEL,
+		Text = m == "max" and "МАКС" or ("×" .. tostring(m)),
+		TextSize = 15,
+		Parent = modeBar,
+	}, { corner(8) })
+	modeButtons[m] = b
+	b.Activated:Connect(function()
+		buyMode = m
+		for mm, bb in pairs(modeButtons) do
+			bb.BackgroundColor3 = mm == buyMode and GOLD or PANEL
+			bb.TextColor3 = mm == buyMode and Color3.fromRGB(40, 30, 10) or WHITE
+		end
+	end)
+end
+modeButtons[1].BackgroundColor3 = GOLD
+modeButtons[1].TextColor3 = Color3.fromRGB(40, 30, 10)
+
+local gensList = scroller(gensPage, 40)
+
+type GenCard = {
+	gen: Config.Generator,
+	frame: Frame,
+	title: TextLabel,
+	info: TextLabel,
+	fill: Frame,
+	milestone: TextLabel,
+	buy: TextButton,
+	buyTop: TextLabel,
+	buyCost: TextLabel,
+}
+local genCards: { GenCard } = {}
+
+for i, gen in ipairs(Config.Generators) do
+	local frame = new("Frame", {
+		Name = gen.id,
+		LayoutOrder = i,
+		Size = UDim2.new(1, 0, 0, 92),
+		BackgroundColor3 = CARD,
+		Visible = false,
+		Parent = gensList,
+	}, { corner(12) })
+	new("Frame", { Size = UDim2.fromOffset(6, 72), Position = UDim2.fromOffset(8, 10), BackgroundColor3 = gen.color, Parent = frame }, { corner(3) })
+	label({ Position = UDim2.fromOffset(20, 8), Size = UDim2.fromOffset(34, 34), Text = gen.icon, TextSize = 26, Parent = frame })
+	local title = label({
+		Position = UDim2.fromOffset(56, 8),
+		Size = UDim2.new(1, -186, 0, 22),
+		Text = gen.name,
+		TextSize = 17,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = frame,
+	})
+	local info = label({
+		Position = UDim2.fromOffset(56, 30),
+		Size = UDim2.new(1, -186, 0, 18),
+		Text = "",
+		TextSize = 13,
+		Font = Enum.Font.Gotham,
+		TextColor3 = MUTED,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = frame,
+	})
+	local _, fill = progressBar(frame, UDim2.fromOffset(20, 58), UDim2.new(1, -150, 0, 10), gen.color)
+	local milestone = label({
+		Position = UDim2.fromOffset(20, 70),
+		Size = UDim2.new(1, -150, 0, 16),
+		Text = "",
+		TextSize = 12,
+		Font = Enum.Font.Gotham,
+		TextColor3 = GOLD,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = frame,
+	})
+	local buy = button({
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(116, 70),
+		BackgroundColor3 = BAD,
+		Text = "",
+		Parent = frame,
+	}, { corner(12) })
+	local buyTop = label({ Size = UDim2.new(1, 0, 0, 26), Position = UDim2.fromOffset(0, 8), Text = "Купить", TextSize = 16, Parent = buy })
+	local buyCost = label({ Size = UDim2.new(1, -8, 0, 24), Position = UDim2.fromOffset(4, 36), Text = "", TextSize = 15, TextScaled = false, Parent = buy })
+	buy.Activated:Connect(function()
+		BuyGenR:FireServer(gen.id, buyMode)
+		pop(buy, 0.92)
+	end)
+	table.insert(genCards, {
+		gen = gen,
+		frame = frame,
+		title = title,
+		info = info,
+		fill = fill,
+		milestone = milestone,
+		buy = buy,
+		buyTop = buyTop,
+		buyCost = buyCost,
+	})
+end
+
+--------------------------------------------------------------------------------
+-- Вкладка «Улучшения»
+--------------------------------------------------------------------------------
+local upsPage = addTab("ups", "⬆ Улучш.")
+local buyAll = button({
+	Size = UDim2.new(1, -10, 0, 38),
+	BackgroundColor3 = GOOD,
+	Text = "Купить все доступные",
+	TextSize = 16,
+	Parent = upsPage,
+}, { corner(10) })
+buyAll.Activated:Connect(function()
+	BuyAllUpsR:FireServer()
+end)
+local upsList = scroller(upsPage, 46)
+local upsEmpty = label({
+	Size = UDim2.new(1, 0, 0, 60),
+	Text = "Новые улучшения появятся, когда прокачаешь генераторы (уровни 10, 25, 50…) или накопишь больше кристаллов.",
+	TextWrapped = true,
+	TextSize = 14,
+	Font = Enum.Font.Gotham,
+	TextColor3 = MUTED,
+	LayoutOrder = 100000,
+	Parent = upsList,
+})
+
+type UpCard = { up: Config.Upgrade, frame: Frame, buy: TextButton }
+local upCards: { [string]: UpCard } = {}
+
+local function makeUpCard(up: Config.Upgrade): UpCard
+	local frame = new("Frame", { Size = UDim2.new(1, 0, 0, 66), BackgroundColor3 = CARD, Parent = upsList }, { corner(12) })
+	new("Frame", { Size = UDim2.fromOffset(6, 46), Position = UDim2.fromOffset(8, 10), BackgroundColor3 = up.color, Parent = frame }, { corner(3) })
+	label({
+		Position = UDim2.fromOffset(22, 8),
+		Size = UDim2.new(1, -150, 0, 22),
+		Text = up.name,
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = frame,
+	})
+	label({
+		Position = UDim2.fromOffset(22, 30),
+		Size = UDim2.new(1, -150, 0, 30),
+		Text = up.desc,
+		TextSize = 12,
+		TextWrapped = true,
+		Font = Enum.Font.Gotham,
+		TextColor3 = MUTED,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Parent = frame,
+	})
+	local buy = button({
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(112, 46),
+		BackgroundColor3 = BAD,
+		Text = "💎 " .. Config.format(up.cost),
+		TextSize = 15,
+		Parent = frame,
+	}, { corner(10) })
+	buy.Activated:Connect(function()
+		BuyUpR:FireServer(up.id)
+		pop(buy, 0.9)
+	end)
+	return { up = up, frame = frame, buy = buy }
+end
+
+--------------------------------------------------------------------------------
+-- Вкладка «Звёзды» (перерождение)
+--------------------------------------------------------------------------------
+local starPage = addTab("stars", "✨ Звёзды")
+local starList = scroller(starPage, 0)
+
+local starHeader = new("Frame", { Size = UDim2.new(1, 0, 0, 230), BackgroundColor3 = CARD, LayoutOrder = 0, Parent = starList }, {
+	corner(12),
+	stroke(GOLD, 1.5, 0.3),
+})
+local dustLabel = label({
+	Position = UDim2.fromOffset(12, 8),
+	Size = UDim2.new(1, -24, 0, 32),
+	Text = "✨ 0 звёздной пыли",
+	TextSize = 22,
+	Font = Enum.Font.FredokaOne,
+	TextColor3 = GOLD,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = starHeader,
+})
+local dustInfo = label({
+	Position = UDim2.fromOffset(12, 40),
+	Size = UDim2.new(1, -24, 0, 54),
+	Text = "",
+	TextSize = 13,
+	TextWrapped = true,
+	Font = Enum.Font.Gotham,
+	TextColor3 = MUTED,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Parent = starHeader,
+})
+local _, dustFill = progressBar(starHeader, UDim2.fromOffset(12, 100), UDim2.new(1, -24, 0, 12), GOLD)
+local dustNext = label({
+	Position = UDim2.fromOffset(12, 114),
+	Size = UDim2.new(1, -24, 0, 18),
+	Text = "",
+	TextSize = 12,
+	Font = Enum.Font.Gotham,
+	TextColor3 = GOLD,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = starHeader,
+})
+local rebirthButton = button({
+	Position = UDim2.fromOffset(12, 138),
+	Size = UDim2.new(1, -24, 0, 50),
+	BackgroundColor3 = BAD,
+	Text = "🔁 ПЕРЕРОДИТЬСЯ",
+	TextSize = 19,
+	Font = Enum.Font.FredokaOne,
+	Parent = starHeader,
+}, { corner(12) })
+local autoToggle = button({
+	Position = UDim2.fromOffset(12, 194),
+	Size = UDim2.new(1, -24, 0, 28),
+	BackgroundColor3 = PANEL,
+	Text = "",
+	TextSize = 13,
+	Visible = false,
+	Parent = starHeader,
+}, { corner(8) })
+autoToggle.Activated:Connect(function()
+	ToggleAutoR:FireServer()
+end)
+
+local confirmUntil = 0
+rebirthButton.Activated:Connect(function()
+	if Config.dustOnRebirth(state) < 1 then
+		return
+	end
+	if os.clock() < confirmUntil then
+		confirmUntil = 0
+		RebirthR:FireServer()
+	else
+		confirmUntil = os.clock() + 3
+		rebirthButton.Text = "Точно? Нажми ещё раз"
+		pop(rebirthButton, 0.9)
+	end
+end)
+
+type PCard = { p: Config.PrestigeUp, frame: Frame, lvl: TextLabel, buy: TextButton }
+local pCards: { PCard } = {}
+for i, p in ipairs(Config.PrestigeUps) do
+	local frame = new("Frame", { Size = UDim2.new(1, 0, 0, 70), BackgroundColor3 = CARD, LayoutOrder = i, Parent = starList }, { corner(12) })
+	label({
+		Position = UDim2.fromOffset(12, 6),
+		Size = UDim2.new(1, -140, 0, 22),
+		Text = "✨ " .. p.name,
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = frame,
+	})
+	label({
+		Position = UDim2.fromOffset(12, 28),
+		Size = UDim2.new(1, -140, 0, 26),
+		Text = p.desc,
+		TextSize = 12,
+		TextWrapped = true,
+		Font = Enum.Font.Gotham,
+		TextColor3 = MUTED,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Parent = frame,
+	})
+	local lvl = label({
+		Position = UDim2.fromOffset(12, 52),
+		Size = UDim2.new(1, -140, 0, 14),
+		Text = "",
+		TextSize = 11,
+		Font = Enum.Font.Gotham,
+		TextColor3 = GOLD,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = frame,
+	})
+	local buy = button({
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(112, 46),
+		BackgroundColor3 = BAD,
+		Text = "",
+		TextSize = 15,
+		Parent = frame,
+	}, { corner(10) })
+	buy.Activated:Connect(function()
+		BuyPUpR:FireServer(p.id)
+		pop(buy, 0.9)
+	end)
+	table.insert(pCards, { p = p, frame = frame, lvl = lvl, buy = buy })
+end
+
+--------------------------------------------------------------------------------
+-- Вкладка «Награды» (достижения и статистика)
+--------------------------------------------------------------------------------
+local achPage = addTab("ach", "🏆 Награды")
+local achList = scroller(achPage, 0)
+local statsCard = new("Frame", { Size = UDim2.new(1, 0, 0, 150), BackgroundColor3 = CARD, LayoutOrder = 0, Parent = achList }, { corner(12) })
+local statsText = label({
+	Position = UDim2.fromOffset(12, 8),
+	Size = UDim2.new(1, -24, 1, -16),
+	Text = "",
+	TextSize = 14,
+	Font = Enum.Font.Gotham,
+	TextWrapped = true,
+	RichText = true,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	Parent = statsCard,
+})
+
+local achGrid = new("Frame", {
+	Size = UDim2.new(1, 0, 0, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1,
+	LayoutOrder = 1,
+	Parent = achList,
+}, {
+	new("UIGridLayout", { CellSize = UDim2.new(0.5, -4, 0, 54), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder }),
+})
+type ACard = { a: Config.Achievement, frame: Frame, title: TextLabel }
+local aCards: { ACard } = {}
+for i, a in ipairs(Config.Achievements) do
+	local frame = new("Frame", { BackgroundColor3 = CARD_DIM, LayoutOrder = i, Parent = achGrid }, { corner(10) })
+	local title = label({
+		Position = UDim2.fromOffset(8, 4),
+		Size = UDim2.new(1, -16, 0, 20),
+		Text = "🔒 " .. a.name,
+		TextSize = 13,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = MUTED,
+		Parent = frame,
+	})
+	label({
+		Position = UDim2.fromOffset(8, 24),
+		Size = UDim2.new(1, -16, 0, 26),
+		Text = a.desc,
+		TextSize = 11,
+		TextWrapped = true,
+		Font = Enum.Font.Gotham,
+		TextColor3 = MUTED,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Parent = frame,
+	})
+	table.insert(aCards, { a = a, frame = frame, title = title })
+end
+
+selectTab("gens")
+
+shopButton.Activated:Connect(function()
+	shop.Visible = not shop.Visible
+	if shop.Visible then
+		pop(shop, 0.95)
+	end
+end)
+homeButton.Activated:Connect(function()
+	GoHomeR:FireServer()
+end)
+
+--------------------------------------------------------------------------------
+-- Всплывающие сообщения
+--------------------------------------------------------------------------------
+local toastHolder = new("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 200),
+	Size = UDim2.fromOffset(520, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+	BackgroundTransparency = 1,
+	Parent = gui,
+}, { new("UIListLayout", { Padding = UDim.new(0, 6), HorizontalAlignment = Enum.HorizontalAlignment.Center }) })
+
+local function toast(text: string, color: Color3?)
+	local t = label({
+		Size = UDim2.fromOffset(0, 40),
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundTransparency = 0.15,
+		BackgroundColor3 = BG,
+		Text = "  " .. text .. "  ",
+		TextSize = 19,
+		Font = Enum.Font.FredokaOne,
+		TextColor3 = color or GOLD,
+		Parent = toastHolder,
+	})
+	corner(12).Parent = t
+	stroke(color or GOLD, 1.5, 0.3).Parent = t
+	pop(t, 0.7)
+	task.delay(3.5, function()
+		local info = TweenInfo.new(0.5)
+		TweenService:Create(t, info, { TextTransparency = 1, BackgroundTransparency = 1 }):Play()
+		local st = t:FindFirstChildOfClass("UIStroke")
+		if st then
+			TweenService:Create(st, info, { Transparency = 1 }):Play()
+		end
+		task.wait(0.5)
+		t:Destroy()
+	end)
+	if #toastHolder:GetChildren() > 5 then
+		for _, c in ipairs(toastHolder:GetChildren()) do
+			if c:IsA("TextLabel") then
+				c:Destroy()
+				break
+			end
+		end
+	end
+end
+
+-- Модальное окно (оффлайн-доход, приветствие, перерождение)
+local function modal(title: string, body: string, buttonText: string)
+	local shade = new("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.45,
+		ZIndex = 50,
+		Parent = gui,
+	})
+	local box = new("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(480, 290),
+		BackgroundColor3 = BG,
+		ZIndex = 51,
+		Parent = shade,
+	}, { corner(20), stroke(GOLD, 3) })
+	label({
+		Position = UDim2.fromOffset(20, 16),
+		Size = UDim2.new(1, -40, 0, 40),
+		Text = title,
+		TextSize = 28,
+		Font = Enum.Font.FredokaOne,
+		TextColor3 = GOLD,
+		ZIndex = 52,
+		Parent = box,
+	})
+	label({
+		Position = UDim2.fromOffset(24, 64),
+		Size = UDim2.new(1, -48, 0, 140),
+		Text = body,
+		TextSize = 17,
+		TextWrapped = true,
+		Font = Enum.Font.Gotham,
+		ZIndex = 52,
+		Parent = box,
+	})
+	local ok = button({
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -18),
+		Size = UDim2.fromOffset(220, 52),
+		BackgroundColor3 = GOOD,
+		Text = buttonText,
+		TextSize = 20,
+		Font = Enum.Font.FredokaOne,
+		ZIndex = 52,
+		Parent = box,
+	}, { corner(14) })
+	pop(box, 0.6)
+	ok.Activated:Connect(function()
+		shade:Destroy()
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- Мой кристалл и анимации
+--------------------------------------------------------------------------------
+local plotsFolder = workspace:WaitForChild("Empire"):WaitForChild("Plots")
+local myCrystal: BasePart? = nil
+local pulse = 0
+
+local function findMyCrystal()
+	local idx = player:GetAttribute("Plot")
+	if typeof(idx) ~= "number" then
+		return
+	end
+	local plot = plotsFolder:FindFirstChild("Plot" .. idx)
+	if plot then
+		myCrystal = plot:FindFirstChild("Crystal") :: BasePart?
+	end
+end
+player:GetAttributeChangedSignal("Plot"):Connect(findMyCrystal)
+findMyCrystal()
+
+type Spinner = { part: BasePart, core: BasePart?, base: Vector3, phase: number }
+local spinners: { Spinner } = {}
+local function collectSpinners()
+	table.clear(spinners)
+	for _, plot in ipairs(plotsFolder:GetChildren()) do
+		local c = plot:FindFirstChild("Crystal")
+		if c and c:IsA("BasePart") then
+			local base = c:GetAttribute("BasePos")
+			if typeof(base) == "Vector3" then
+				table.insert(spinners, {
+					part = c,
+					core = c:FindFirstChild("Core") :: BasePart?,
+					base = base,
+					phase = #spinners * 0.7,
+				})
+			end
+		end
+	end
+end
+collectSpinners()
+plotsFolder.ChildAdded:Connect(collectSpinners)
+
+local tilt = CFrame.Angles(math.rad(45), 0, math.rad(35.264))
+RunService.RenderStepped:Connect(function(dt)
+	local t = os.clock()
+	pulse = math.max(0, pulse - dt * 5)
+	local speed = frenzyLeft > 0 and 2.2 or 0.6
+	for _, s in ipairs(spinners) do
+		local bob = math.sin(t * 1.5 + s.phase) * 0.7
+		local cf = CFrame.new(s.base + Vector3.new(0, bob, 0)) * CFrame.Angles(0, t * speed + s.phase, 0) * tilt
+		s.part.CFrame = cf
+		if s.core then
+			s.core.CFrame = cf
+		end
+		if s.part == myCrystal then
+			local sz = 9 * (1 + pulse * 0.1)
+			s.part.Size = Vector3.new(sz, sz, sz)
+		end
+	end
+end)
+
+local function popNumber(amount: number, color: Color3, big: boolean)
+	local adornee = myCrystal
+	if not adornee then
+		return
+	end
+	local bb = new("BillboardGui", {
+		Size = UDim2.fromOffset(big and 260 or 170, big and 64 or 44),
+		StudsOffsetWorldSpace = Vector3.new(math.random(-50, 50) / 10, math.random(10, 50) / 10, math.random(-30, 30) / 10),
+		AlwaysOnTop = true,
+		LightInfluence = 0,
+		Adornee = adornee,
+		Parent = playerGui,
+	})
+	local txt = label({
+		Size = UDim2.fromScale(1, 1),
+		Text = "+" .. Config.format(amount),
+		TextScaled = true,
+		Font = Enum.Font.FredokaOne,
+		TextColor3 = color,
+		TextStrokeTransparency = 0.2,
+		Parent = bb,
+	})
+	local info = TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	TweenService:Create(bb, info, { StudsOffsetWorldSpace = bb.StudsOffsetWorldSpace + Vector3.new(0, 5, 0) }):Play()
+	TweenService:Create(txt, info, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+	task.delay(1, function()
+		bb:Destroy()
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- Клики
+--------------------------------------------------------------------------------
+mineButton.Activated:Connect(function()
+	ClickR:FireServer()
+	pop(mineButton, 0.9)
+end)
+
+--------------------------------------------------------------------------------
+-- Сверкающий кристалл (ловить мышкой/пальцем)
+--------------------------------------------------------------------------------
+local function spawnGolden(token: string, lifetime: number)
+	local size = 96
+	local g = button({
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(math.random(18, 62) / 100, math.random(28, 72) / 100),
+		Size = UDim2.fromOffset(size, size),
+		BackgroundColor3 = GOLD,
+		BackgroundTransparency = 0.1,
+		Text = "💎",
+		TextSize = 54,
+		ZIndex = 40,
+		Parent = gui,
+	}, { corner(size // 2), stroke(WHITE, 4) })
+	local glow = label({
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 1, 4),
+		Size = UDim2.fromOffset(140, 22),
+		Text = "Лови!",
+		TextSize = 18,
+		Font = Enum.Font.FredokaOne,
+		TextColor3 = GOLD,
+		TextStrokeTransparency = 0.2,
+		ZIndex = 40,
+		Parent = g,
+	})
+	local _ = glow
+	pop(g, 0.2)
+	playSound(SND_CLICK, 0.5, 1.6)
+	local alive = true
+	task.spawn(function()
+		local start = os.clock()
+		while alive and g.Parent do
+			local t = os.clock() - start
+			g.Rotation = math.sin(t * 3) * 15
+			local sc = g:FindFirstChildOfClass("UIScale")
+			if sc and t > 0.3 then
+				sc.Scale = 1 + math.sin(t * 6) * 0.08
+			end
+			if t > lifetime then
+				break
+			end
+			if t > lifetime - 3 then
+				g.BackgroundTransparency = 0.1 + (t - (lifetime - 3)) / 3 * 0.8
+			end
+			RunService.RenderStepped:Wait()
+		end
+		if alive then
+			alive = false
+			g:Destroy()
+		end
+	end)
+	g.Activated:Connect(function()
+		if not alive then
+			return
+		end
+		alive = false
+		ClaimGoldenR:FireServer(token)
+		g:Destroy()
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- Обновление интерфейса
+--------------------------------------------------------------------------------
+local upsKey = ""
+
+local function rebuildUpgrades()
+	local available = {}
+	for _, up in ipairs(Config.Upgrades) do
+		if Config.isUpgradeUnlocked(state, up) then
+			table.insert(available, up)
+		end
+	end
+	table.sort(available, function(a, b)
+		return a.cost < b.cost
+	end)
+	local keyParts = {}
+	for _, up in ipairs(available) do
+		table.insert(keyParts, up.id)
+	end
+	local key = table.concat(keyParts, ",")
+	if key == upsKey then
+		return
+	end
+	upsKey = key
+	local keep: { [string]: boolean } = {}
+	for i, up in ipairs(available) do
+		keep[up.id] = true
+		local card = upCards[up.id]
+		if not card then
+			card = makeUpCard(up)
+			upCards[up.id] = card
+		end
+		card.frame.LayoutOrder = i
+	end
+	for id, card in pairs(upCards) do
+		if not keep[id] then
+			card.frame:Destroy()
+			upCards[id] = nil
+		end
+	end
+	upsEmpty.Visible = #available == 0
+end
+
+local function updateUI()
+	if not hasState then
+		return
+	end
+	local bank = crystalsNow()
+	local m = mult()
+	balanceLabel.Text = "💎 " .. Config.format(bank)
+	rateLabel.Text = string.format("⚙ %s/сек", Config.format(perSec * m))
+	rateLabel.TextColor3 = m > 1 and GOLD or WHITE
+
+	local parts = {}
+	local g = Config.globalMult(state)
+	if g > 1.001 then
+		table.insert(parts, "✨ Бонусы ×" .. Config.format(g))
+	end
+	local achCount = Config.countKeys(state.ach)
+	if achCount > 0 then
+		table.insert(parts, string.format("🏆 %d/%d", achCount, #Config.Achievements))
+	end
+	if state.dust > 0 then
+		table.insert(parts, "✨ " .. Config.format(state.dust) .. " пыли")
+	end
+	bonusLabel.Text = table.concat(parts, "    ")
+
+	local clickNow = clickValue * m * (stormLeft > 0 and Config.ClickStormMult or 1)
+	mineSub.Text = "+" .. Config.format(clickNow) .. " за клик"
+	mineSub.TextColor3 = stormLeft > 0 and PINK or WHITE
+
+	-- Бонусы
+	frenzyBar.Visible = frenzyLeft > 0
+	if frenzyLeft > 0 then
+		frenzyFill.Size = UDim2.fromScale(math.clamp(frenzyLeft / frenzyMax, 0, 1), 1)
+		frenzyText.Text = string.format("🔥 Лихорадка: добыча ×%d — %d с", Config.FrenzyMult, math.ceil(frenzyLeft))
+	end
+	stormBar.Visible = stormLeft > 0
+	if stormLeft > 0 then
+		stormFill.Size = UDim2.fromScale(math.clamp(stormLeft / stormMax, 0, 1), 1)
+		stormText.Text = string.format("⚡ Клик-шторм: клик ×%d — %d с", Config.ClickStormMult, math.ceil(stormLeft))
+	end
+
+	-- Генераторы: показываем купленные и два следующих
+	local shownLocked = 0
+	local anyAffordable = false
+	for _, card in ipairs(genCards) do
+		local gen = card.gen
+		local lvl = state.gens[gen.id] or 0
+		local visible = lvl > 0 or shownLocked < 2
+		if lvl == 0 then
+			shownLocked += 1
+		end
+		card.frame.Visible = visible
+		if visible then
+			local prod = Config.genProduction(state, gen, g) * m
+			if lvl > 0 then
+				card.title.Text = string.format("%s  ·  ур. %d", gen.name, lvl)
+				local share = perSec > 0 and prod / (perSec * m) * 100 or 0
+				card.info.Text = string.format("+%s/с  (%d%% дохода)", Config.format(prod), math.floor(share + 0.5))
+			else
+				card.title.Text = gen.name
+				local one = gen.baseProd * Config.genUpgradeMult(state, gen.id) * g
+				card.info.Text = string.format("Даёт +%s/с за уровень", Config.format(one))
+			end
+			local nextM, prevM = Config.nextMilestone(lvl)
+			if nextM then
+				card.fill.Size = UDim2.fromScale(math.clamp((lvl - prevM) / (nextM - prevM), 0, 1), 1)
+				card.milestone.Text = string.format("На ур. %d — добыча ×2 (ещё %d)", nextM, nextM - lvl)
+			else
+				card.fill.Size = UDim2.fromScale(1, 1)
+				card.milestone.Text = "Все рубежи пройдены!"
+			end
+
+			local n: number
+			if buyMode == "max" then
+				n = math.max(1, Config.maxAffordable(state, gen, bank))
+			else
+				n = buyMode :: number
+			end
+			local cost = Config.genCost(state, gen, n)
+			local can = bank >= cost
+			if buyMode == "max" or buyMode ~= 1 then
+				-- можно купить меньше, чем выбрано: покупка «сколько хватает»
+				local k = Config.maxAffordable(state, gen, bank, if buyMode == "max" then nil else buyMode :: number)
+				if k > 0 then
+					n = k
+					cost = Config.genCost(state, gen, k)
+					can = true
+				end
+			end
+			card.buyTop.Text = n > 1 and ("Купить ×" .. n) or "Купить"
+			card.buyCost.Text = "💎 " .. Config.format(cost)
+			card.buy.BackgroundColor3 = can and GOOD or BAD
+			anyAffordable = anyAffordable or can
+		end
+	end
+	tabs.gens.badge.Visible = anyAffordable and currentTab ~= "gens"
+
+	-- Улучшения
+	rebuildUpgrades()
+	local anyUp = false
+	for _, card in pairs(upCards) do
+		local can = bank >= card.up.cost
+		card.buy.BackgroundColor3 = can and GOOD or BAD
+		anyUp = anyUp or can
+	end
+	tabs.ups.badge.Visible = anyUp and currentTab ~= "ups"
+	buyAll.Visible = anyUp
+	buyAll.BackgroundColor3 = GOOD
+
+	-- Звёзды
+	local gain = Config.dustOnRebirth(state)
+	dustLabel.Text = string.format("✨ %s звёздной пыли", Config.format(state.dust))
+	dustInfo.Text = string.format(
+		"Получено всего: %s → +%d%% к добыче навсегда. Перерождение сбросит кристаллы, генераторы и улучшения; пыль, звёздные улучшения и награды останутся.",
+		Config.format(state.dustEver),
+		math.floor(state.dustEver * Config.DustPerBonus * 100 + 0.5)
+	)
+	local nextNeed = Config.runTotalForDust(state, gain + 1)
+	local prevNeed = gain > 0 and Config.runTotalForDust(state, gain) or 0
+	dustFill.Size = UDim2.fromScale(math.clamp((state.runTotal - prevNeed) / math.max(1, nextNeed - prevNeed), 0, 1), 1)
+	dustNext.Text = string.format("До следующей пыли: добыть ещё 💎 %s", Config.format(math.max(0, nextNeed - state.runTotal)))
+	if os.clock() >= confirmUntil then
+		rebirthButton.Text = gain >= 1 and string.format("🔁 ПЕРЕРОДИТЬСЯ: +%s ✨", Config.format(gain)) or "🔁 Нужно ещё добыть"
+	end
+	rebirthButton.BackgroundColor3 = gain >= 1 and Color3.fromRGB(170, 120, 20) or BAD
+	local hasAuto = Config.pupLevel(state, "auto") >= 1
+	autoToggle.Visible = hasAuto
+	autoToggle.Text = state.autobuy and "🤖 Прораб: ВКЛ (нажми, чтобы выключить)" or "🤖 Прораб: ВЫКЛ (нажми, чтобы включить)"
+	autoToggle.BackgroundColor3 = state.autobuy and Color3.fromRGB(40, 110, 70) or PANEL
+	local anyP = false
+	for _, card in ipairs(pCards) do
+		local lvl = Config.pupLevel(state, card.p.id)
+		if lvl >= card.p.maxLevel then
+			card.lvl.Text = string.format("Уровень %d/%d", lvl, card.p.maxLevel)
+			card.buy.Text = "МАКС"
+			card.buy.BackgroundColor3 = GOLD
+			card.buy.TextColor3 = Color3.fromRGB(40, 30, 10)
+		else
+			local cost = Config.pupCost(card.p, lvl)
+			card.lvl.Text = string.format("Уровень %d/%d", lvl, card.p.maxLevel)
+			card.buy.Text = "✨ " .. Config.format(cost)
+			local can = state.dust >= cost
+			card.buy.BackgroundColor3 = can and GOOD or BAD
+			card.buy.TextColor3 = WHITE
+			anyP = anyP or can
+		end
+	end
+	tabs.stars.badge.Visible = (anyP or gain >= math.max(5, state.dustEver)) and currentTab ~= "stars"
+
+	-- Награды
+	statsText.Text = string.format(
+		"<b>Статистика</b>\nДобыто за всё время: 💎 %s\nЗа этот забег: 💎 %s\nВ игре: %s\nКликов: %s · Сверкающих: %d · Перерождений: %d\nДостижения: %d из %d → +%d%% к добыче",
+		Config.format(state.allTotal),
+		Config.format(state.runTotal),
+		Config.formatTime(state.playTime),
+		Config.format(state.clicks),
+		state.goldens,
+		state.rebirths,
+		achCount,
+		#Config.Achievements,
+		math.floor(achCount * Config.AchievementBonus * 100 + 0.5)
+	)
+	for _, card in ipairs(aCards) do
+		local done = state.ach[card.a.id] == true
+		card.frame.BackgroundColor3 = done and Color3.fromRGB(70, 60, 25) or CARD_DIM
+		card.title.Text = (done and "🏆 " or "🔒 ") .. card.a.name
+		card.title.TextColor3 = done and GOLD or MUTED
+	end
+end
+
+task.spawn(function()
+	while true do
+		updateUI()
+		task.wait(0.1)
+	end
+end)
+
+-- Счётчики бонусов тикают и между снимками
+RunService.Heartbeat:Connect(function(dt)
+	frenzyLeft = math.max(0, frenzyLeft - dt)
+	stormLeft = math.max(0, stormLeft - dt)
+	if hasState then
+		balanceLabel.Text = "💎 " .. Config.format(crystalsNow())
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Сеть
+--------------------------------------------------------------------------------
+StateR.OnClientEvent:Connect(function(s: any)
+	state.crystals = s.crystals
+	state.runTotal = s.runTotal
+	state.allTotal = s.allTotal
+	state.dust = s.dust
+	state.dustEver = s.dustEver
+	state.rebirths = s.rebirths
+	state.gens = s.gens or {}
+	state.ups = s.ups or {}
+	state.pups = s.pups or {}
+	state.ach = s.ach or {}
+	state.clicks = s.clicks
+	state.goldens = s.goldens
+	state.playTime = s.playTime
+	state.autobuy = s.autobuy
+	perSec = s.perSec
+	clickValue = s.clickValue
+	frenzyLeft = s.frenzyLeft
+	stormLeft = s.stormLeft
+	stateTime = os.clock()
+	hasState = true
+	if not myCrystal then
+		findMyCrystal()
+	end
+end)
+
+EventR.OnClientEvent:Connect(function(kind: string, a: any, b: any)
+	if kind == "click" then
+		pulse = 1
+		popNumber(a, stormLeft > 0 and PINK or WHITE, stormLeft > 0)
+		playSound(SND_CLICK, 0.2, 1 + math.random() * 0.3)
+	elseif kind == "bought" then
+		local up = Config.UpById[a]
+		playSound(SND_BUY, 0.5)
+		if up then
+			toast("⬆ " .. up.name, ACCENT)
+		end
+	elseif kind == "milestone" then
+		local gen = Config.GenById[a]
+		playSound(SND_BUY, 0.6, 1.3)
+		if gen then
+			toast(string.format("%s %s: уровень %d — добыча ×2!", gen.icon, gen.name, b), GOLD)
+		end
+	elseif kind == "achievement" then
+		local ach = Config.AchById[a]
+		playSound(SND_WIN, 0.35, 1.2)
+		if ach then
+			toast("🏆 Достижение: " .. ach.name, GOLD)
+		end
+	elseif kind == "goldenSpawn" then
+		spawnGolden(a, b)
+	elseif kind == "golden" then
+		playSound(SND_WIN, 0.5)
+		if a == "lucky" then
+			toast("💎 Удача! +" .. Config.format(b), GOLD)
+			popNumber(b, GOLD, true)
+		elseif a == "frenzy" then
+			frenzyMax = b
+			frenzyLeft = b
+			toast(string.format("🔥 Лихорадка! Вся добыча ×%d на %d с", Config.FrenzyMult, b), GOLD)
+		elseif a == "storm" then
+			stormMax = b
+			stormLeft = b
+			toast(string.format("⚡ Клик-шторм! Клики ×%d на %d с — жми!", Config.ClickStormMult, b), PINK)
+		end
+	elseif kind == "rebirth" then
+		playSound(SND_WIN, 0.6)
+		modal(
+			"🔁 Перерождение!",
+			string.format(
+				"Ты получил ✨ %s звёздной пыли.\nТеперь вся добыча навсегда больше. Загляни во вкладку «Звёзды» — там улучшения за пыль.",
+				Config.format(a)
+			),
+			"Вперёд!"
+		)
+		selectTab("stars")
+	elseif kind == "offline" then
+		modal(
+			"С возвращением!",
+			string.format("Пока тебя не было (%s), твоя империя добыла:\n\n💎 %s", Config.formatTime(b), Config.format(a)),
+			"Забрать"
+		)
+	elseif kind == "welcome" then
+		modal(
+			"💎 Кристальная империя",
+			"Строй генераторы — они добывают кристаллы сами, даже когда ты не в игре.\n\nПокупай улучшения, лови сверкающие кристаллы и перерождайся ради звёздной пыли!",
+			"Играть"
+		)
+	elseif kind == "message" then
+		toast(tostring(a), ACCENT)
+	end
+end)
+]]></ProtectedString></Properties></Item>
+</Item>
+</Item>
+</roblox>

@@ -1,0 +1,5 @@
+{"name":"Game","className":"DataModel","children":[
+ {"name":"ReplicatedStorage","className":"ReplicatedStorage","children":[{"name":"GameConfig","className":"ModuleScript","filePaths":["src/GameConfig.lua"]}]},
+ {"name":"ServerScriptService","className":"ServerScriptService","children":[{"name":"GameServer","className":"Script","filePaths":["src/GameServer.server.lua"],"children":[{"name":"World","className":"ModuleScript","filePaths":["src/World.lua"]}]}]},
+ {"name":"StarterPlayer","className":"StarterPlayer","children":[{"name":"StarterPlayerScripts","className":"StarterPlayerScripts","children":[{"name":"GameClient","className":"LocalScript","filePaths":["src/GameClient.client.lua"]}]}]}
+]}
