@@ -9,7 +9,7 @@ _ref = 0
 def ref():
     global _ref
     _ref += 1
-    return f"RBX{_ref:08X}"
+    return f"RBX{_ref:032X}"
 
 
 def cdata(text):
@@ -46,7 +46,9 @@ def part(cls, name, size, pos, rgb, material, extra=""):
 
 SLATE = 800
 
-xml = f"""<roblox version="4">
+xml = f"""<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+<External>null</External>
+<External>nil</External>
 <Item class="Workspace" referent="{ref()}"><Properties><string name="Name">Workspace</string></Properties>
 {part("Part", "Baseplate", (1024, 20, 1024), (0, -10, 0), (40, 36, 56), SLATE, '<bool name="Locked">true</bool>')}
 </Item>
