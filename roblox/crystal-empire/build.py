@@ -67,5 +67,5 @@ xml = f"""<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="htt
 """
 
 out = ROOT / "CrystalEmpire.rbxlx"
-out.write_text(xml, encoding="utf-8")
+out.write_text(xml.strip(), encoding="utf-8")  # Roblox не принимает перевод строки после </roblox>
 print("Готово:", out)
