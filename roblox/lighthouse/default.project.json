@@ -1,0 +1,14 @@
+{
+  "name": "Lighthouse",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": { "GameConfig": { "$path": "src/GameConfig.lua" } },
+    "ServerScriptService": {
+      "GameServer": {
+        "$path": "src/GameServer.server.lua",
+        "World": { "$path": "src/World.lua" }
+      }
+    },
+    "StarterPlayer": { "StarterPlayerScripts": { "GameClient": { "$path": "src/GameClient.client.lua" } } }
+  }
+}
