@@ -165,7 +165,9 @@ public class RecommendationServiceTests
         var o = new ScoringOptions();
         var early = RecommendationService.WeightsFor(o, 0);
         var late = RecommendationService.WeightsFor(o, 5);
-        Assert.True(early.Get(ScoreComponent.Meta) > late.Get(ScoreComponent.Meta));
+        Assert.Equal(0, early.Get(ScoreComponent.Meta));
+        Assert.Equal(0, late.Get(ScoreComponent.Meta));
+        Assert.True(early.Get(ScoreComponent.Safety) > late.Get(ScoreComponent.Safety));
         Assert.True(early.Get(ScoreComponent.Counter) < late.Get(ScoreComponent.Counter));
         Assert.Equal(100, o.WeightsEarly.Weights.Values.Sum(), 3);
         Assert.Equal(100, o.WeightsLate.Weights.Values.Sum(), 3);
@@ -251,8 +253,12 @@ public class RecommendationServiceTests
         var low = new PlayerProfile { MyPosition = Position.Offlane, Rank = RankBracket.HeraldGuardian };
         var high = new PlayerProfile { MyPosition = Position.Offlane, Rank = RankBracket.DivineImmortal };
         var state = new DraftState(DraftPhase.DraftDetected, [], null, DateTimeOffset.UtcNow);
-        Assert.True(Service().Evaluate(Axe.Id, state, low, patch)!.Components[ScoreComponent.Meta].Value > 0);
-        Assert.True(Service().Evaluate(Axe.Id, state, high, patch)!.Components[ScoreComponent.Meta].Value < 0);
+        // Мета по умолчанию выключена; сам расчёт проверяется с ненулевым весом.
+        var o = new ScoringOptions { PoolOnly = false };
+        o.SetWeight(ScoreComponent.Meta, 10);
+        Assert.True(Service(o).Evaluate(Axe.Id, state, low, patch)!.Components[ScoreComponent.Meta].Value > 0);
+        Assert.True(Service(o).Evaluate(Axe.Id, state, high, patch)!.Components[ScoreComponent.Meta].Value < 0);
+        Assert.False(Service().Evaluate(Axe.Id, state, low, patch)!.Components.ContainsKey(ScoreComponent.Meta));
     }
 
     [Fact]

@@ -87,7 +87,7 @@ public sealed class RecognitionOptions
 public sealed class ScoringOptions
 {
     /// <summary>Версия набора весов. При обновлении приложения со сменой весов старые сохранённые настройки оценки сбрасываются.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
     public int Version { get; set; }
 
     /// <summary>
@@ -97,8 +97,8 @@ public sealed class ScoringOptions
     public bool PoolOnly { get; set; } = true;
 
     /// <summary>
-    /// Веса раннего пика (о врагах почти ничего не известно): важнее ваша позиция, сила героя в патче
-    /// и устойчивость к контрпику. Сумма — 100.
+    /// Веса раннего пика (о врагах почти ничего не известно): важнее ваша позиция, устойчивость к контрпику
+    /// и связки с союзниками. Мета (сила героя в патче) не учитывается. Сумма — 100.
     /// </summary>
     public ScoringWeights WeightsEarly { get; set; } = new()
     {
@@ -106,18 +106,17 @@ public sealed class ScoringOptions
         {
             [ScoreComponent.RoleFit] = 10,
             [ScoreComponent.Comfort] = 10,
-            [ScoreComponent.Meta] = 20,
-            [ScoreComponent.Safety] = 15,
-            [ScoreComponent.Synergy] = 10,
-            [ScoreComponent.Pairs] = 5,
+            [ScoreComponent.Meta] = 0, // мета не учитывается (решение владельца, 25.11): только пики и контрпики
+            [ScoreComponent.Safety] = 20,
+            [ScoreComponent.Synergy] = 15,
+            [ScoreComponent.Pairs] = 10,
             [ScoreComponent.Lane] = 15,
-            [ScoreComponent.Counter] = 15,
+            [ScoreComponent.Counter] = 20,
         },
     };
 
     /// <summary>
-    /// Веса позднего пика (враги известны): линия и вся вражеская команда весят вместе 55%,
-    /// мета и ваши отметки — 15%. Сумма — 100.
+    /// Веса позднего пика (враги известны): контрпик и линия — 60%, связки — 25%. Мета не учитывается. Сумма — 100.
     /// </summary>
     public ScoringWeights WeightsLate { get; set; } = new()
     {
@@ -125,12 +124,12 @@ public sealed class ScoringOptions
         {
             [ScoreComponent.RoleFit] = 5,
             [ScoreComponent.Comfort] = 5,
-            [ScoreComponent.Meta] = 10,
+            [ScoreComponent.Meta] = 0,
             [ScoreComponent.Safety] = 5,
             [ScoreComponent.Synergy] = 10,
-            [ScoreComponent.Pairs] = 10,
+            [ScoreComponent.Pairs] = 15,
             [ScoreComponent.Lane] = 25,
-            [ScoreComponent.Counter] = 30,
+            [ScoreComponent.Counter] = 35,
         },
     };
 
