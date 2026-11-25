@@ -248,12 +248,19 @@ public partial class App : System.Windows.Application
     private void OnSnapshot(DraftSnapshot s)
     {
         _lastSnapshot = s;
+        if (s.Status == PipelineStatus.GameNotFound) { _plan = null; _planUntil = null; } // игра закрыта — плана больше нет
         bool inDraft = s.State.Phase is DraftPhase.DraftDetected or DraftPhase.BanPhase or DraftPhase.PickPhase;
 
-        if (s.Plan is not null)
+        if (s.Plan is not null && inDraft)
         {
             _plan = s.Plan;
             _planUntil = null; // пока идёт драфт, план виден без ограничения по времени
+        }
+        else if (s.Plan is not null && _plan is null && s.State.Phase == DraftPhase.Completed)
+        {
+            // Свой герой оказался последним пиком: план приходит уже после драфта — показать один раз, с отсчётом.
+            _plan = s.Plan;
+            _planUntil = DateTimeOffset.Now.AddSeconds(Math.Max(0, _settings.Current.Overlay.PlanLingerSeconds));
         }
         else if (inDraft && !s.OwnHeroPicked)
         {
@@ -342,8 +349,12 @@ public partial class App : System.Windows.Application
 
     /// <summary>План виден после вашего пика до конца драфта и ещё PlanLingerSeconds после него.</summary>
     private bool PlanVisible() =>
-        _plan is not null && _settings.Current.Overlay.ShowPlan &&
+        _plan is not null && _settings.Current.Overlay.ShowPlan && GameOnScreen() &&
+        _lastSnapshot is { Status: PipelineStatus.Observing } &&
         (_planUntil is null || DateTimeOffset.Now < _planUntil);
+
+    /// <summary>Окно Dota есть и не свёрнуто. Без него окошко не показывается никогда (кроме режима перемещения).</summary>
+    private bool GameOnScreen() => _capture.FindGameWindow() is { IsMinimized: false };
 
     /// <summary>
     /// Окошко видно во время драфта (по настройке — до вашего пика или весь драфт).
@@ -361,7 +372,7 @@ public partial class App : System.Windows.Application
             if (!_popupVm.IsPlan) _popupVm.ShowPlan(_plan);
             show = true;
         }
-        else if (_userHidden || _lastSnapshot is not { Status: PipelineStatus.Observing } s || !_popupVm.HasPicks)
+        else if (_userHidden || _lastSnapshot is not { Status: PipelineStatus.Observing } s || !_popupVm.HasPicks || !GameOnScreen())
         {
             show = false;
         }

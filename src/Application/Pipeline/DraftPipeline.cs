@@ -93,6 +93,13 @@ public sealed class DraftPipeline
     /// </summary>
     public static readonly TimeSpan GameLockAfterSeen = TimeSpan.FromSeconds(90);
     private DateTimeOffset _gameLockUntil = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// После завершённого драфта начинается игра, а игра не бывает короче ~15 минут: всё это время новый драфт
+    /// по картинке не начинается (только по GSI «выбор героев»). Иначе верхняя панель игры снова вызывала подсказки.
+    /// </summary>
+    public static readonly TimeSpan NoNewDraftAfterCompleted = TimeSpan.FromMinutes(15);
+    private DateTimeOffset _draftCompletedAt = DateTimeOffset.MinValue;
     private bool _draftConfirmed;
 
     private PatchData _patch = PatchData.Empty;
@@ -229,7 +236,8 @@ public sealed class DraftPipeline
             bool idle = _machine.Phase == DraftPhase.Idle;
             bool gsiDraft = external == ExternalGameState.HeroSelection;
             bool inGame = external == ExternalGameState.InGame
-                          || (idle && !gsiDraft && (heroes > MaxOccupiedAtDraftStart || now < _gameLockUntil));
+                          || (idle && !gsiDraft && (heroes > MaxOccupiedAtDraftStart || now < _gameLockUntil
+                                                       || now - _draftCompletedAt < NoNewDraftAfterCompleted));
             bool gsiSaysNoDraft = idle && hint is not null && !gsiDraft;
             if (inGame) _gameLockUntil = now + GameLockAfterSeen;
             if (inGame || gsiSaysNoDraft) observation = observation with { DraftScreenVisible = false };
@@ -267,6 +275,7 @@ public sealed class DraftPipeline
             if (observation.DraftScreenVisible) _tracker.Update(observation.Slots);
             slots = _tracker.Slots;
         }
+        if (transition is { To: DraftPhase.Completed }) _draftCompletedAt = observation.Timestamp;
         if (transition is not null) _log.Info($"Phase {transition.From} → {transition.To}");
 
         bool textChanged = observation.DraftScreenVisible && _machine.Phase != DraftPhase.Idle && MergeText(observation);

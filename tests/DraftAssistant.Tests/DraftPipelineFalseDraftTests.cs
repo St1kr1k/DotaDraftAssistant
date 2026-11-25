@@ -118,4 +118,28 @@ public class DraftPipelineFalseDraftTests
         var s = Run(p, d, Frame(heroes: 0), frames: 20);
         Assert.Equal(DraftPhase.Idle, s!.State.Phase);
     }
+
+    [Fact]
+    public void After_completed_draft_even_empty_bars_do_not_start_a_new_draft()
+    {
+        // После драфта — игра: даже «пустые» полоски (лобби, экран после игры) не считаются новым драфтом 15 минут.
+        var (p, d, _) = Create();
+        Run(p, d, Frame(heroes: 0), frames: 5);
+        for (int k = 1; k <= 10; k++) Run(p, d, Frame(heroes: k), frames: 5);
+        Run(p, d, Frame(heroes: 0, visible: false), frames: 40);
+        var s = Run(p, d, Frame(heroes: 0), frames: 20);
+        Assert.Equal(DraftPhase.Idle, s!.State.Phase);
+    }
+
+    [Fact]
+    public void Gsi_hero_selection_still_starts_a_draft_right_after_previous_one()
+    {
+        var (p, d, h) = Create();
+        Run(p, d, Frame(heroes: 0), frames: 5);
+        for (int k = 1; k <= 10; k++) Run(p, d, Frame(heroes: k), frames: 5);
+        Run(p, d, Frame(heroes: 0, visible: false), frames: 40);
+        h.Current = new GameStateHint(ExternalGameState.HeroSelection, null, null, DateTimeOffset.UtcNow);
+        var s = Run(p, d, Frame(heroes: 0), frames: 5);
+        Assert.NotEqual(DraftPhase.Idle, s!.State.Phase);
+    }
 }
