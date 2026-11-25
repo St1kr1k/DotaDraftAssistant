@@ -1,0 +1,2473 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+<External>null</External>
+<External>nil</External>
+<Item class="Workspace" referent="RBX00000000000000000000000000000001"><Properties><string name="Name">Workspace</string></Properties>
+</Item>
+<Item class="Lighting" referent="RBX00000000000000000000000000000002"><Properties><string name="Name">Lighting</string><token name="Technology">4</token></Properties></Item>
+<Item class="ReplicatedStorage" referent="RBX00000000000000000000000000000003"><Properties><string name="Name">ReplicatedStorage</string></Properties>
+<Item class="ModuleScript" referent="RBX00000000000000000000000000000004"><Properties><string name="Name">GameConfig</string><ProtectedString name="Source"><![CDATA[-- «Маяк»: дерево улучшений на парящих островах. Баланс и формулы (общие для сервера и клиента).
+local Config = {}
+
+--------------------------------------------------------------------------------
+-- Валюты и острова (слои прогресса)
+--------------------------------------------------------------------------------
+export type Island = {
+	index: number,
+	id: string, -- валюта острова
+	name: string,
+	icon: string,
+	color: Color3,
+	dark: Color3,
+	center: Vector3,
+	radius: number,
+	tag: string, -- тег над головой, когда слой открыт
+}
+
+Config.Islands = {
+	{ index = 1, id = "L", name = "Маяк", icon = "💡", color = Color3.fromRGB(255, 205, 90), dark = Color3.fromRGB(70, 60, 45), center = Vector3.new(0, 0, 0), radius = 70, tag = "" },
+	{ index = 2, id = "Z", name = "Заря", icon = "🌅", color = Color3.fromRGB(255, 120, 80), dark = Color3.fromRGB(75, 45, 45), center = Vector3.new(0, 25, -230), radius = 58, tag = "Заря" },
+	{ index = 3, id = "S", name = "Звёзды", icon = "✦", color = Color3.fromRGB(150, 140, 255), dark = Color3.fromRGB(45, 45, 80), center = Vector3.new(-230, 50, -230), radius = 54, tag = "Звёзды" },
+	{ index = 4, id = "E", name = "Затмение", icon = "🌑", color = Color3.fromRGB(235, 235, 255), dark = Color3.fromRGB(25, 25, 35), center = Vector3.new(-230, 75, 0), radius = 50, tag = "Затмение" },
+} :: { Island }
+
+Config.IslandById = {} :: { [string]: Island }
+for _, isl in ipairs(Config.Islands) do
+	Config.IslandById[isl.id] = isl
+end
+
+Config.LIGHTHOUSE_POS = Vector3.new(-46, 0, -18) -- на острове Маяк
+Config.TILE_STEP = 12 -- расстояние между плитками дерева
+Config.TILE_SIZE = 9
+
+--------------------------------------------------------------------------------
+-- Данные игрока
+--------------------------------------------------------------------------------
+export type Data = {
+	cur: { [string]: number }, -- L, Z, S, E — сколько есть
+	run: { [string]: number }, -- сколько заработано с последнего сброса этого слоя
+	total: { [string]: number }, -- за всё время
+	nodes: { [string]: number }, -- уровни узлов
+	resets: { [string]: number }, -- сколько раз сделан каждый сброс (Z, S, E)
+	golden: number,
+	playTime: number,
+	lastOnline: number?,
+}
+
+function Config.newData(): Data
+	return {
+		cur = { L = 0, Z = 0, S = 0, E = 0 },
+		run = { L = 0, Z = 0, S = 0, E = 0 },
+		total = { L = 0, Z = 0, S = 0, E = 0 },
+		nodes = {},
+		resets = { Z = 0, S = 0, E = 0 },
+		golden = 0,
+		playTime = 0,
+		lastOnline = nil,
+	}
+end
+
+--------------------------------------------------------------------------------
+-- Узлы дерева
+--------------------------------------------------------------------------------
+export type Node = {
+	id: string,
+	island: string, -- валюта, за которую покупается
+	name: string,
+	icon: string,
+	desc: string,
+	x: number, -- координаты на сетке острова
+	z: number,
+	parents: { string }, -- хватит любого купленного родителя
+	cost: number,
+	growth: number,
+	max: number,
+	kind: string,
+	value: number,
+}
+
+local N: { Node } = {}
+local function node(t: Node)
+	table.insert(N, t)
+end
+
+-- Остров 1: Маяк (💡)
+node({ id = "spark", island = "L", name = "Искра", icon = "✨", desc = "+1 💡/с", x = 0, z = 0, parents = {}, cost = 5, growth = 1.6, max = 25, kind = "addL", value = 1 })
+node({ id = "wick", island = "L", name = "Фитиль", icon = "🕯", desc = "💡 ×1.3", x = -1, z = 1, parents = { "spark" }, cost = 100, growth = 3.5, max = 8, kind = "multL", value = 1.3 })
+node({ id = "flint", island = "L", name = "Кремень", icon = "🔥", desc = "+3 💡/с", x = 1, z = 1, parents = { "spark" }, cost = 50, growth = 1.7, max = 25, kind = "addL", value = 3 })
+node({ id = "oil", island = "L", name = "Масло", icon = "🛢", desc = "💡 ×2", x = -2, z = 2, parents = { "wick" }, cost = 3000, growth = 1, max = 1, kind = "multL", value = 2 })
+node({ id = "lamplighter", island = "L", name = "Фонарщик", icon = "🏮", desc = "+2% 💡 за каждый уровень на Маяке", x = 0, z = 2, parents = { "wick", "flint" }, cost = 8000, growth = 1, max = 1, kind = "synergyL", value = 0.02 })
+node({ id = "bellows", island = "L", name = "Меха", icon = "💨", desc = "+15 💡/с", x = 2, z = 2, parents = { "flint" }, cost = 800, growth = 1.8, max = 25, kind = "addL", value = 15 })
+node({ id = "lens", island = "L", name = "Линза", icon = "🔍", desc = "💡 ×1.2", x = -1, z = 3, parents = { "oil", "lamplighter" }, cost = 30000, growth = 3.5, max = 10, kind = "multL", value = 1.2 })
+node({ id = "mirror", island = "L", name = "Зеркала", icon = "🪞", desc = "💡 ×2", x = 1, z = 3, parents = { "lamplighter", "bellows" }, cost = 1e5, growth = 1, max = 1, kind = "multL", value = 2 })
+node({ id = "glow", island = "L", name = "Отсвет", icon = "🌟", desc = "💡 растёт от самого 💡", x = 0, z = 4, parents = { "lens", "mirror" }, cost = 1e6, growth = 1, max = 1, kind = "selfL", value = 0.3 })
+node({ id = "prism", island = "L", name = "Призма", icon = "🔷", desc = "💡 ×1.25", x = -2, z = 4, parents = { "lens" }, cost = 1.5e6, growth = 4, max = 10, kind = "multL", value = 1.25 })
+node({ id = "beacon", island = "L", name = "Ярче маяка", icon = "🗼", desc = "💡 ×3", x = 2, z = 4, parents = { "mirror" }, cost = 8e6, growth = 1, max = 1, kind = "multL", value = 3 })
+node({ id = "dawnkey", island = "L", name = "Мост к Заре", icon = "🌉", desc = "Открывает остров Заря", x = 0, z = 5, parents = { "glow" }, cost = 2.5e7, growth = 1, max = 1, kind = "unlock", value = 2 })
+node({ id = "twin", island = "L", name = "Двойной фитиль", icon = "🕯", desc = "💡 ×1.6", x = -1, z = 6, parents = { "dawnkey" }, cost = 1e9, growth = 5, max = 5, kind = "multL", value = 1.6 })
+node({ id = "comet", island = "L", name = "Комета", icon = "☄", desc = "Падающие звёзды дают ×3", x = 1, z = 6, parents = { "dawnkey" }, cost = 5e9, growth = 1, max = 1, kind = "golden", value = 3 })
+node({ id = "dawnwick", island = "L", name = "Фитиль зари", icon = "🌄", desc = "💡 растёт от 🌅", x = 0, z = 7, parents = { "twin", "comet" }, cost = 5e10, growth = 1, max = 1, kind = "fromZ", value = 0.15})
+node({ id = "flood", island = "L", name = "Половодье света", icon = "🌊", desc = "💡 ×1.4", x = 0, z = 8, parents = { "dawnwick" }, cost = 5e11, growth = 4, max = 20, kind = "multL", value = 1.4 })
+
+-- Остров 2: Заря (🌅)
+node({ id = "morning", island = "Z", name = "Утро", icon = "🌄", desc = "💡 ×1.6", x = 0, z = 0, parents = {}, cost = 1, growth = 2.2, max = 15, kind = "multL", value = 1.6 })
+node({ id = "warmth", island = "Z", name = "Тепло", icon = "☀", desc = "💡 растёт от 🌅", x = -1, z = 1, parents = { "morning" }, cost = 4, growth = 1, max = 1, kind = "fromZ", value = 0.25})
+node({ id = "autospark", island = "Z", name = "Сам горит", icon = "🤖", desc = "Сам покупает узлы Маяка", x = 1, z = 1, parents = { "morning" }, cost = 2, growth = 1, max = 1, kind = "auto", value = 1 })
+node({ id = "zpower", island = "Z", name = "Сила зари", icon = "🔥", desc = "🌅 за сброс ×1.4", x = 0, z = 2, parents = { "warmth", "autospark" }, cost = 6, growth = 3, max = 12, kind = "gainZ", value = 1.4 })
+node({ id = "embers", island = "Z", name = "Угли", icon = "🪵", desc = "После Зари сразу 💡 ×1000 стартом", x = 2, z = 2, parents = { "autospark" }, cost = 15, growth = 5, max = 4, kind = "startL", value = 1 })
+node({ id = "sunrise", island = "Z", name = "Рассвет", icon = "🌅", desc = "Каждую секунду +1% от 🌅 за сброс", x = -1, z = 3, parents = { "zpower" }, cost = 60, growth = 1, max = 1, kind = "passiveZ", value = 0.01 })
+node({ id = "heat", island = "Z", name = "Жар", icon = "♨", desc = "💡 ×2", x = 1, z = 3, parents = { "zpower" }, cost = 150, growth = 3.5, max = 8, kind = "multL", value = 2 })
+node({ id = "noon", island = "Z", name = "Полдень", icon = "🌞", desc = "Узлы Маяка дешевле в 10 раз", x = -2, z = 4, parents = { "sunrise" }, cost = 1000, growth = 1, max = 1, kind = "discountL", value = 10 })
+node({ id = "starkey", island = "Z", name = "Мост к Звёздам", icon = "🌉", desc = "Открывает остров Звёзды", x = 0, z = 4, parents = { "sunrise", "heat" }, cost = 5000, growth = 1, max = 1, kind = "unlock", value = 3 })
+node({ id = "blaze", island = "Z", name = "Зарево", icon = "🔆", desc = "🌅 за сброс ×1.6", x = 0, z = 5, parents = { "starkey" }, cost = 200000, growth = 5, max = 10, kind = "gainZ", value = 1.6 })
+
+-- Остров 3: Звёзды (✦)
+node({ id = "starlight", island = "S", name = "Звёздный свет", icon = "⭐", desc = "💡 ×3", x = 0, z = 0, parents = {}, cost = 1, growth = 2.8, max = 15, kind = "multL", value = 3 })
+node({ id = "stardawn", island = "S", name = "Звёздная заря", icon = "🌠", desc = "🌅 за сброс ×1.6", x = -1, z = 1, parents = { "starlight" }, cost = 2, growth = 3.5, max = 12, kind = "gainZ", value = 1.6 })
+node({ id = "autodawn", island = "S", name = "Вечный рассвет", icon = "🤖", desc = "Сам покупает узлы Зари", x = 1, z = 1, parents = { "starlight" }, cost = 4, growth = 1, max = 1, kind = "auto", value = 2 })
+node({ id = "memory", island = "S", name = "Память", icon = "🧠", desc = "Узлы «Сам горит» и «Рассвет» не сбрасываются", x = 0, z = 2, parents = { "stardawn", "autodawn" }, cost = 8, growth = 1, max = 1, kind = "keep", value = 1 })
+node({ id = "constellation", island = "S", name = "Созвездие", icon = "✦", desc = "💡 растёт от ✦", x = -2, z = 2, parents = { "stardawn" }, cost = 20, growth = 1, max = 1, kind = "fromS", value = 0.25})
+node({ id = "galaxy", island = "S", name = "Галактика", icon = "🌌", desc = "Каждую секунду +0.5% от ✦ за сброс", x = 2, z = 2, parents = { "autodawn" }, cost = 50, growth = 1, max = 1, kind = "passiveS", value = 0.005 })
+node({ id = "supernova", island = "S", name = "Сверхновая", icon = "💥", desc = "✦ за сброс ×1.6", x = 0, z = 3, parents = { "memory" }, cost = 100, growth = 3.5, max = 10, kind = "gainS", value = 1.6 })
+node({ id = "eclipsekey", island = "S", name = "Мост к Затмению", icon = "🌉", desc = "Открывает остров Затмение", x = 0, z = 4, parents = { "supernova" }, cost = 3000, growth = 1, max = 1, kind = "unlock", value = 4 })
+
+-- Остров 4: Затмение (🌑)
+node({ id = "umbra", island = "E", name = "Тень луны", icon = "🌑", desc = "💡 ×20", x = 0, z = 0, parents = {}, cost = 1, growth = 3.5, max = 10, kind = "multL", value = 20 })
+node({ id = "corona", island = "E", name = "Корона", icon = "💫", desc = "✦ за сброс ×2", x = -1, z = 1, parents = { "umbra" }, cost = 2, growth = 3.5, max = 10, kind = "gainS", value = 2 })
+node({ id = "autostar", island = "E", name = "Звездопад", icon = "🤖", desc = "Сам покупает узлы Звёзд", x = 1, z = 1, parents = { "umbra" }, cost = 3, growth = 1, max = 1, kind = "auto", value = 3 })
+node({ id = "totality", island = "E", name = "Полное затмение", icon = "⚫", desc = "🌅 и ✦ за сброс ×4", x = 0, z = 2, parents = { "corona", "autostar" }, cost = 20, growth = 5, max = 5, kind = "gainZS", value = 4 })
+node({ id = "lastlight", island = "E", name = "Последний свет", icon = "🌟", desc = "💡 ×1e6. Ты победил тьму!", x = 0, z = 3, parents = { "totality" }, cost = 1000, growth = 1, max = 1, kind = "multL", value = 1e6 })
+
+Config.Nodes = N
+Config.NodeById = {} :: { [string]: Node }
+for _, n in ipairs(N) do
+	Config.NodeById[n.id] = n
+end
+
+-- Мировые координаты плитки
+function Config.nodePosition(n: Node): Vector3
+	local isl = Config.IslandById[n.island]
+	local start = isl.radius * -0.55 -- дерево растёт от дальнего края к ближнему
+	return isl.center + Vector3.new(n.x * Config.TILE_STEP, 0, start + n.z * Config.TILE_STEP)
+end
+
+function Config.lvl(d: Data, id: string): number
+	return d.nodes[id] or 0
+end
+
+function Config.isAvailable(d: Data, n: Node): boolean
+	if #n.parents == 0 then
+		return Config.islandOpen(d, n.island)
+	end
+	for _, p in ipairs(n.parents) do
+		if Config.lvl(d, p) > 0 then
+			return true
+		end
+	end
+	return false
+end
+
+function Config.islandOpen(d: Data, id: string): boolean
+	if id == "L" then
+		return true
+	elseif id == "Z" then
+		return Config.lvl(d, "dawnkey") > 0 or (d.resets.Z or 0) > 0 or (d.resets.S or 0) > 0 or (d.resets.E or 0) > 0
+	elseif id == "S" then
+		return Config.lvl(d, "starkey") > 0 or (d.resets.S or 0) > 0 or (d.resets.E or 0) > 0
+	elseif id == "E" then
+		return Config.lvl(d, "eclipsekey") > 0 or (d.resets.E or 0) > 0
+	end
+	return false
+end
+
+function Config.nodeCost(d: Data, n: Node): number
+	local c = n.cost * n.growth ^ Config.lvl(d, n.id)
+	if n.island == "L" and Config.lvl(d, "noon") > 0 then
+		c /= 10
+	end
+	return math.ceil(c)
+end
+
+function Config.canBuy(d: Data, n: Node): boolean
+	return Config.isAvailable(d, n) and Config.lvl(d, n.id) < n.max and (d.cur[n.island] or 0) >= Config.nodeCost(d, n)
+end
+
+--------------------------------------------------------------------------------
+-- Формулы
+--------------------------------------------------------------------------------
+local function sumKind(d: Data, kind: string, island: string?): number
+	local s = 0
+	for _, n in ipairs(Config.Nodes) do
+		if n.kind == kind and (island == nil or n.island == island) then
+			s += n.value * Config.lvl(d, n.id)
+		end
+	end
+	return s
+end
+
+local function prodKind(d: Data, kind: string): number
+	local m = 1
+	for _, n in ipairs(Config.Nodes) do
+		if n.kind == kind then
+			local l = Config.lvl(d, n.id)
+			if l > 0 then
+				m *= n.value ^ l
+			end
+		end
+	end
+	return m
+end
+
+function Config.islandLevels(d: Data, island: string): number
+	local s = 0
+	for _, n in ipairs(Config.Nodes) do
+		if n.island == island then
+			s += Config.lvl(d, n.id)
+		end
+	end
+	return s
+end
+
+function Config.Lps(d: Data): number
+	local base = 1 + sumKind(d, "addL")
+	local m = prodKind(d, "multL")
+	local syn = sumKind(d, "synergyL")
+	if syn > 0 then
+		m *= 1 + syn * Config.islandLevels(d, "L")
+	end
+	local selfL = sumKind(d, "selfL")
+	if selfL > 0 then
+		m *= 1 + math.log10((d.cur.L or 0) + 1) * selfL
+	end
+	local fz = sumKind(d, "fromZ")
+	if fz > 0 then
+		m *= (1 + (d.cur.Z or 0)) ^ fz
+	end
+	local fs = sumKind(d, "fromS")
+	if fs > 0 then
+		m *= (1 + (d.cur.S or 0)) ^ fs
+	end
+	-- каждая Заря/Звезда/Затмение за всё время немного усиливают свет
+	m *= 1 + 0.1 * (d.total.Z or 0) ^ 0.5
+	return base * m
+end
+
+function Config.goldenMult(d: Data): number
+	return prodKind(d, "golden")
+end
+
+-- Сколько валюты даст сброс
+function Config.gainZ(d: Data): number
+	if not Config.islandOpen(d, "Z") then
+		return 0
+	end
+	local g = (d.run.L / 2e6) ^ 0.4
+	g *= prodKind(d, "gainZ") * prodKind(d, "gainZS")
+	return math.floor(g)
+end
+
+function Config.gainS(d: Data): number
+	if not Config.islandOpen(d, "S") then
+		return 0
+	end
+	local g = (d.run.Z / 3000) ^ 0.4
+	g *= prodKind(d, "gainS") * prodKind(d, "gainZS")
+	return math.floor(g)
+end
+
+function Config.gainE(d: Data): number
+	if not Config.islandOpen(d, "E") then
+		return 0
+	end
+	return math.floor((d.run.S / 500) ^ 0.4)
+end
+
+function Config.passiveZ(d: Data): number
+	return sumKind(d, "passiveZ")
+end
+
+function Config.passiveS(d: Data): number
+	return sumKind(d, "passiveS")
+end
+
+function Config.autoLevel(d: Data): number
+	local a = 0
+	for _, n in ipairs(Config.Nodes) do
+		if n.kind == "auto" and Config.lvl(d, n.id) > 0 then
+			a = math.max(a, n.value)
+		end
+	end
+	return a
+end
+
+function Config.startL(d: Data): number
+	local l = sumKind(d, "startL")
+	return l > 0 and 1000 ^ l or 0
+end
+
+-- Что остаётся при сбросе слоя: возвращает новые уровни узлов
+function Config.applyReset(d: Data, layer: string)
+	local wipe: { [string]: boolean } = { L = true }
+	if layer == "S" or layer == "E" then
+		wipe.Z = true
+	end
+	if layer == "E" then
+		wipe.S = true
+	end
+	local keep = Config.lvl(d, "memory") > 0
+	for _, n in ipairs(Config.Nodes) do
+		if wipe[n.island] then
+			local saved = keep and (n.id == "autospark" or n.id == "sunrise")
+			-- мосты к уже открытым островам не теряются
+			if not saved and n.kind ~= "unlock" then
+				d.nodes[n.id] = nil
+			end
+		end
+	end
+	d.cur.L = 0
+	d.run.L = 0
+	if wipe.Z then
+		d.cur.Z = 0
+		d.run.Z = 0
+	end
+	if wipe.S then
+		d.cur.S = 0
+		d.run.S = 0
+	end
+	d.cur.L = Config.startL(d)
+end
+
+--------------------------------------------------------------------------------
+-- Падающие звёзды (бонус, который ловишь ногами)
+--------------------------------------------------------------------------------
+Config.GOLDEN_MIN = 35
+Config.GOLDEN_MAX = 70
+Config.GOLDEN_SECONDS = 60 -- сколько секунд дохода даёт звезда
+
+Config.OFFLINE_RATE = 0.5
+Config.OFFLINE_MAX = 4 * 3600
+
+--------------------------------------------------------------------------------
+-- Форматирование
+--------------------------------------------------------------------------------
+local SUFFIXES = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "De", "UDe", "DDe", "TDe", "QaDe", "QiDe", "SxDe", "SpDe", "OcDe", "NoDe", "Vg" }
+
+function Config.format(n: number): string
+	if n ~= n then
+		return "0"
+	end
+	if n < 1000 then
+		if n < 10 and n ~= math.floor(n) then
+			return string.format("%.1f", math.floor(n * 10) / 10)
+		end
+		return tostring(math.floor(n))
+	end
+	local i = 1
+	local v = n
+	while v >= 1000 and i < #SUFFIXES do
+		v /= 1000
+		i += 1
+	end
+	if v >= 1000 then
+		return string.format("%.2e", n)
+	elseif v >= 100 then
+		return string.format("%d%s", math.floor(v), SUFFIXES[i])
+	elseif v >= 10 then
+		return string.format("%.1f%s", math.floor(v * 10) / 10, SUFFIXES[i])
+	end
+	return string.format("%.2f%s", math.floor(v * 100) / 100, SUFFIXES[i])
+end
+
+function Config.formatTime(seconds: number): string
+	seconds = math.max(0, math.floor(seconds))
+	local h = math.floor(seconds / 3600)
+	local m = math.floor(seconds % 3600 / 60)
+	local s = seconds % 60
+	if h > 0 then
+		return string.format("%d ч %02d мин", h, m)
+	elseif m > 0 then
+		return string.format("%d мин %02d с", m, s)
+	end
+	return string.format("%d с", s)
+end
+
+return Config
+]]></ProtectedString></Properties></Item>
+</Item>
+<Item class="ServerScriptService" referent="RBX00000000000000000000000000000005"><Properties><string name="Name">ServerScriptService</string></Properties>
+<Item class="Script" referent="RBX00000000000000000000000000000007"><Properties><string name="Name">GameServer</string><ProtectedString name="Source"><![CDATA[-- Сервер: экономика, покупка узлов, перерождения, автопокупка, падающие звёзды, сохранение.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+local World = require(script:WaitForChild("World"))
+
+type Data = Config.Data
+
+local store: DataStore? = nil
+local topStore: OrderedDataStore? = nil
+do
+	local ok, err = pcall(function()
+		store = DataStoreService:GetDataStore("LightTree_v1")
+		topStore = DataStoreService:GetOrderedDataStore("LightTree_Top_v1")
+	end)
+	if not ok then
+		warn("DataStore недоступен:", err)
+	end
+end
+
+local remotes = Instance.new("Folder")
+remotes.Name = "Remotes"
+local function remote(name: string): RemoteEvent
+	local r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = remotes
+	return r
+end
+local R = {
+	Buy = remote("Buy"),
+	Teleport = remote("Teleport"),
+	Claim = remote("Claim"),
+	State = remote("State"),
+	Event = remote("Event"),
+}
+remotes.Parent = ReplicatedStorage
+
+local world = World.build()
+
+--------------------------------------------------------------------------------
+-- Сессии
+--------------------------------------------------------------------------------
+type Session = {
+	player: Player,
+	data: Data,
+	lps: number,
+	golden: string?,
+	goldenPos: Vector3?,
+	goldenExpire: number,
+	nextGolden: number,
+	autoTimer: number,
+	lastAction: number,
+	actions: number,
+	loaded: boolean,
+	ready: boolean,
+	bestLayer: string,
+}
+local sessions: { [Player]: Session } = {}
+
+local function num(v: any): number
+	local n = tonumber(v)
+	if n == nil or n ~= n or n == math.huge then
+		return 0
+	end
+	return math.max(0, n)
+end
+
+local CUR = { "L", "Z", "S", "E" }
+
+local function sanitize(saved: any): Data
+	local d = Config.newData()
+	if type(saved) ~= "table" then
+		return d
+	end
+	for _, key in ipairs({ "cur", "run", "total" }) do
+		local src = saved[key]
+		if type(src) == "table" then
+			for _, c in ipairs(CUR) do
+				(d :: any)[key][c] = num(src[c])
+			end
+		end
+	end
+	if type(saved.nodes) == "table" then
+		for id, lvl in pairs(saved.nodes) do
+			local n = Config.NodeById[id]
+			if n then
+				local v = math.min(n.max, math.floor(num(lvl)))
+				if v > 0 then
+					d.nodes[id] = v
+				end
+			end
+		end
+	end
+	if type(saved.resets) == "table" then
+		for _, c in ipairs({ "Z", "S", "E" }) do
+			d.resets[c] = math.floor(num(saved.resets[c]))
+		end
+	end
+	d.golden = math.floor(num(saved.golden))
+	d.playTime = num(saved.playTime)
+	d.lastOnline = tonumber(saved.lastOnline)
+	return d
+end
+
+local function event(s: Session, kind: string, ...)
+	R.Event:FireClient(s.player, kind, ...)
+end
+
+local function recompute(s: Session)
+	s.lps = Config.Lps(s.data)
+end
+
+local function sendState(s: Session)
+	local d = s.data
+	R.State:FireClient(s.player, {
+		cur = d.cur,
+		run = d.run,
+		total = d.total,
+		nodes = d.nodes,
+		resets = d.resets,
+		golden = d.golden,
+		playTime = d.playTime,
+		lps = s.lps,
+	})
+end
+
+local function add(s: Session, c: string, amount: number)
+	if amount ~= amount or amount <= 0 then
+		return
+	end
+	local d = s.data
+	d.cur[c] += amount
+	d.run[c] += amount
+	d.total[c] += amount
+end
+
+local function highestLayer(d: Data): string
+	if (d.resets.E or 0) > 0 then
+		return "E"
+	elseif (d.resets.S or 0) > 0 then
+		return "S"
+	elseif (d.resets.Z or 0) > 0 then
+		return "Z"
+	end
+	return "L"
+end
+
+local function updateTag(s: Session)
+	local char = s.player.Character
+	local head = char and char:FindFirstChild("Head") :: BasePart?
+	if not head then
+		return
+	end
+	local bb = head:FindFirstChild("LayerTag") :: BillboardGui?
+	if not bb then
+		local nb = Instance.new("BillboardGui")
+		nb.Name = "LayerTag"
+		nb.Size = UDim2.fromOffset(200, 30)
+		nb.StudsOffset = Vector3.new(0, 2.7, 0)
+		nb.MaxDistance = 90
+		nb.LightInfluence = 0
+		local t = Instance.new("TextLabel")
+		t.Name = "Text"
+		t.Size = UDim2.fromScale(1, 1)
+		t.BackgroundTransparency = 1
+		t.TextScaled = true
+		t.Font = Enum.Font.FredokaOne
+		t.TextStrokeTransparency = 0.2
+		t.Parent = nb
+		nb.Parent = head
+		bb = nb
+	end
+	local label = (bb :: BillboardGui):FindFirstChild("Text") :: TextLabel
+	local layer = highestLayer(s.data)
+	local isl = Config.IslandById[layer]
+	if layer == "L" then
+		label.Text = ""
+	else
+		label.Text = string.format("[%s %s ×%d]", isl.icon, isl.tag, s.data.resets[layer])
+		label.TextColor3 = isl.color
+	end
+	s.bestLayer = layer
+end
+
+local function setLeaderstats(s: Session)
+	local ls = s.player:FindFirstChild("leaderstats")
+	if not ls then
+		return
+	end
+	local l = ls:FindFirstChild("💡 Свет") :: StringValue?
+	if l then
+		l.Value = Config.format(s.data.total.L)
+	end
+	local layer = ls:FindFirstChild("Слой") :: StringValue?
+	if layer then
+		local h = highestLayer(s.data)
+		layer.Value = h == "L" and "—" or Config.IslandById[h].tag
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Сохранение
+--------------------------------------------------------------------------------
+local function save(player: Player)
+	local s = sessions[player]
+	if not s or not s.loaded or not store then
+		return
+	end
+	local d = s.data
+	local payload = {
+		cur = d.cur,
+		run = d.run,
+		total = d.total,
+		nodes = d.nodes,
+		resets = d.resets,
+		golden = d.golden,
+		playTime = d.playTime,
+		lastOnline = os.time(),
+	}
+	local ok, err = pcall(function()
+		(store :: DataStore):SetAsync("p_" .. player.UserId, payload)
+	end)
+	if not ok then
+		warn("Не удалось сохранить", player.Name, err)
+	end
+	if topStore and d.total.L > 0 then
+		local score = math.floor(math.log10(d.total.L + 1) * 100)
+		pcall(function()
+			(topStore :: OrderedDataStore):SetAsync("u_" .. player.UserId, score)
+		end)
+	end
+end
+
+local nameCache: { [number]: string } = {}
+local function refreshLeaderboard()
+	if not topStore then
+		World.setLeaderboard({})
+		return
+	end
+	local ok, pages = pcall(function()
+		return (topStore :: OrderedDataStore):GetSortedAsync(false, 10)
+	end)
+	if not ok or not pages then
+		return
+	end
+	local rows = {}
+	for _, entry in ipairs((pages :: DataStorePages):GetCurrentPage()) do
+		local uid = tonumber(string.sub(entry.key, 3))
+		if uid then
+			local name = nameCache[uid]
+			if not name then
+				local okName, n = pcall(function()
+					return Players:GetNameFromUserIdAsync(uid)
+				end)
+				name = okName and n or ("Игрок " .. uid)
+				nameCache[uid] = name
+			end
+			table.insert(rows, { name = name :: string, value = 10 ^ (entry.value / 100) })
+		end
+	end
+	World.setLeaderboard(rows)
+end
+
+--------------------------------------------------------------------------------
+-- Вход / выход
+--------------------------------------------------------------------------------
+local function onPlayerAdded(player: Player)
+	local ls = Instance.new("Folder")
+	ls.Name = "leaderstats"
+	local l = Instance.new("StringValue")
+	l.Name = "💡 Свет"
+	l.Parent = ls
+	local layer = Instance.new("StringValue")
+	layer.Name = "Слой"
+	layer.Parent = ls
+	ls.Parent = player
+
+	local s: Session = {
+		player = player,
+		data = Config.newData(),
+		lps = 1,
+		golden = nil,
+		goldenPos = nil,
+		goldenExpire = 0,
+		nextGolden = os.clock() + 30,
+		autoTimer = 0,
+		lastAction = 0,
+		actions = 0,
+		loaded = false,
+		ready = false,
+		bestLayer = "L",
+	}
+	sessions[player] = s
+	player.CharacterAdded:Connect(function(char)
+		char:WaitForChild("Head", 10)
+		updateTag(s)
+	end)
+
+	local saved = nil
+	local loadedOk = true
+	if store then
+		local ok, result = pcall(function()
+			return (store :: DataStore):GetAsync("p_" .. player.UserId)
+		end)
+		if ok then
+			saved = result
+		else
+			loadedOk = false
+			warn("Не удалось загрузить", player.Name, result)
+		end
+	end
+	if not player.Parent then
+		return
+	end
+	s.data = sanitize(saved)
+	s.loaded = loadedOk
+	recompute(s)
+	s.ready = true
+	updateTag(s)
+	setLeaderstats(s)
+
+	local d = s.data
+	if d.lastOnline then
+		local away = math.clamp(os.time() - d.lastOnline, 0, Config.OFFLINE_MAX)
+		if away >= 60 then
+			local earned = s.lps * away * Config.OFFLINE_RATE
+			add(s, "L", earned)
+			local z = Config.passiveZ(d) * Config.gainZ(d) * away * Config.OFFLINE_RATE
+			add(s, "Z", z)
+			task.delay(2, function()
+				if player.Parent then
+					event(s, "offline", earned, os.time() - (d.lastOnline or os.time()), z)
+				end
+			end)
+		end
+	else
+		task.delay(1.5, function()
+			if player.Parent then
+				event(s, "welcome")
+			end
+		end)
+	end
+	if not loadedOk then
+		event(s, "message", "⚠ Не удалось загрузить сохранение — прогресс этой сессии не сохранится. Перезайди позже.")
+	end
+	sendState(s)
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+for _, p in ipairs(Players:GetPlayers()) do
+	task.spawn(onPlayerAdded, p)
+end
+Players.PlayerRemoving:Connect(function(player)
+	save(player)
+	sessions[player] = nil
+end)
+game:BindToClose(function()
+	local pending = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		pending += 1
+		task.spawn(function()
+			save(player)
+			pending -= 1
+		end)
+	end
+	local t = os.clock()
+	while pending > 0 and os.clock() - t < 25 do
+		task.wait(0.1)
+	end
+end)
+
+local function allow(s: Session?): boolean
+	if not s or not s.ready then
+		return false
+	end
+	local now = os.clock()
+	if now - s.lastAction > 1 then
+		s.lastAction = now
+		s.actions = 0
+	end
+	s.actions += 1
+	return s.actions <= 30
+end
+
+--------------------------------------------------------------------------------
+-- Покупка узлов
+--------------------------------------------------------------------------------
+local function buyNode(s: Session, n: Config.Node): boolean
+	local d = s.data
+	if not Config.canBuy(d, n) then
+		return false
+	end
+	d.cur[n.island] -= Config.nodeCost(d, n)
+	d.nodes[n.id] = Config.lvl(d, n.id) + 1
+	return true
+end
+
+R.Buy.OnServerEvent:Connect(function(player, id)
+	local s = sessions[player]
+	local n = type(id) == "string" and Config.NodeById[id] or nil
+	if not allow(s) or not n then
+		return
+	end
+	local ses = s :: Session
+	-- покупать можно, только стоя у плитки
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root or (root.Position - Config.nodePosition(n)).Magnitude > 14 then
+		return
+	end
+	if buyNode(ses, n) then
+		recompute(ses)
+		event(ses, "bought", n.id, Config.lvl(ses.data, n.id))
+		if n.kind == "unlock" then
+			event(ses, "islandOpen", Config.Islands[n.value].id)
+		end
+		sendState(ses)
+	end
+end)
+
+-- Автопокупка: уровень 1 — Маяк, 2 — Заря, 3 — Звёзды
+local AUTO_ISLANDS = { "L", "Z", "S" }
+local function autobuy(s: Session)
+	local level = Config.autoLevel(s.data)
+	if level <= 0 then
+		return
+	end
+	local any = false
+	for i = 1, level do
+		local island = AUTO_ISLANDS[i]
+		for _ = 1, 30 do
+			local best, bestCost = nil, math.huge
+			for _, n in ipairs(Config.Nodes) do
+				if n.island == island and n.kind ~= "unlock" and Config.canBuy(s.data, n) then
+					local c = Config.nodeCost(s.data, n)
+					if c < bestCost then
+						best, bestCost = n, c
+					end
+				end
+			end
+			if not best or not buyNode(s, best) then
+				break
+			end
+			any = true
+		end
+	end
+	if any then
+		recompute(s)
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Перерождения
+--------------------------------------------------------------------------------
+local GAIN = { Z = Config.gainZ, S = Config.gainS, E = Config.gainE }
+
+local function prestige(s: Session, layer: string)
+	local d = s.data
+	local fn = GAIN[layer]
+	if not fn then
+		return
+	end
+	local gain = fn(d)
+	if gain < 1 then
+		event(s, "message", "Пока слишком мало — копи дальше")
+		return
+	end
+	local before = highestLayer(d)
+	d.resets[layer] += 1
+	add(s, layer, gain)
+	Config.applyReset(d, layer)
+	recompute(s)
+	event(s, "prestige", layer, gain)
+	if highestLayer(d) ~= before then
+		event(s, "newLayer", layer)
+	end
+	updateTag(s)
+	setLeaderstats(s)
+	sendState(s)
+	task.spawn(save, s.player)
+end
+
+for _, altar in ipairs(world.altars) do
+	altar.prompt.Triggered:Connect(function(player)
+		local s = sessions[player]
+		if allow(s) then
+			prestige(s :: Session, altar.layer)
+		end
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- Телепорт
+--------------------------------------------------------------------------------
+R.Teleport.OnServerEvent:Connect(function(player, id)
+	local s = sessions[player]
+	if not allow(s) or type(id) ~= "string" or not Config.IslandById[id] then
+		return
+	end
+	if not Config.islandOpen((s :: Session).data, id) then
+		return
+	end
+	local char = player.Character
+	if char and char:FindFirstChild("HumanoidRootPart") then
+		char:PivotTo(World.islandSpawn(id))
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Падающие звёзды
+--------------------------------------------------------------------------------
+local function nearestIsland(pos: Vector3): Config.Island
+	local best, bd = Config.Islands[1], math.huge
+	for _, isl in ipairs(Config.Islands) do
+		local dist = (isl.center - pos).Magnitude
+		if dist < bd then
+			best, bd = isl, dist
+		end
+	end
+	return best
+end
+
+local function spawnGolden(s: Session)
+	local char = s.player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root then
+		return
+	end
+	local isl = nearestIsland(root.Position)
+	local a = math.random() * math.pi * 2
+	local r = math.random(10, math.floor(isl.radius * 0.8))
+	local pos = isl.center + Vector3.new(math.cos(a) * r, 2.5, math.sin(a) * r)
+	s.golden = HttpService:GenerateGUID(false)
+	s.goldenPos = pos
+	s.goldenExpire = os.clock() + 25
+	event(s, "goldenSpawn", s.golden, pos)
+end
+
+R.Claim.OnServerEvent:Connect(function(player, token)
+	local s = sessions[player]
+	if not allow(s) then
+		return
+	end
+	local ses = s :: Session
+	if not ses.golden or token ~= ses.golden or os.clock() > ses.goldenExpire or not ses.goldenPos then
+		return
+	end
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not root or (root.Position - (ses.goldenPos :: Vector3)).Magnitude > 14 then
+		return
+	end
+	ses.golden = nil
+	ses.data.golden += 1
+	local amount = ses.lps * Config.GOLDEN_SECONDS * Config.goldenMult(ses.data)
+	add(ses, "L", amount)
+	ses.nextGolden = os.clock() + math.random(Config.GOLDEN_MIN, Config.GOLDEN_MAX)
+	event(ses, "golden", amount)
+	sendState(ses)
+end)
+
+--------------------------------------------------------------------------------
+-- Главный цикл
+--------------------------------------------------------------------------------
+local TICK = 0.2
+local stateTimer, slowTimer = 0, 0
+task.spawn(function()
+	while true do
+		local dt = task.wait(TICK)
+		stateTimer += dt
+		slowTimer += dt
+		local now = os.clock()
+		for _, s in pairs(sessions) do
+			if s.ready then
+				local d = s.data
+				d.playTime += dt
+				recompute(s) -- 💡/с зависит от текущих 💡, 🌅 и ✦
+				add(s, "L", s.lps * dt)
+				local pz = Config.passiveZ(d)
+				if pz > 0 then
+					add(s, "Z", pz * Config.gainZ(d) * dt)
+				end
+				local psv = Config.passiveS(d)
+				if psv > 0 then
+					add(s, "S", psv * Config.gainS(d) * dt)
+				end
+				s.autoTimer += dt
+				if s.autoTimer >= 0.5 then
+					s.autoTimer = 0
+					autobuy(s)
+				end
+				if s.golden and now > s.goldenExpire then
+					s.golden = nil
+					s.nextGolden = now + math.random(Config.GOLDEN_MIN, Config.GOLDEN_MAX)
+					event(s, "goldenGone")
+				elseif not s.golden and now >= s.nextGolden then
+					spawnGolden(s)
+				end
+			end
+		end
+		if stateTimer >= 0.25 then
+			stateTimer = 0
+			for _, s in pairs(sessions) do
+				if s.ready then
+					sendState(s)
+				end
+			end
+		end
+		if slowTimer >= 60 then
+			slowTimer = 0
+			for player, s in pairs(sessions) do
+				setLeaderstats(s)
+				task.spawn(save, player)
+			end
+			task.spawn(refreshLeaderboard)
+		end
+	end
+end)
+task.delay(5, refreshLeaderboard)
+task.spawn(function()
+	while true do
+		task.wait(3)
+		for _, s in pairs(sessions) do
+			if s.ready then
+				setLeaderstats(s)
+			end
+		end
+	end
+end)
+]]></ProtectedString></Properties><Item class="ModuleScript" referent="RBX00000000000000000000000000000006"><Properties><string name="Name">World</string><ProtectedString name="Source"><![CDATA[-- Общий мир: парящие острова, плитки дерева, связи, алтари, табло.
+-- Состояние плиток (куплено/доступно/цена) каждый клиент раскрашивает сам.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+
+local World = {}
+
+local function A(x: number, y: number, z: number): CFrame
+	return CFrame.Angles(math.rad(x), math.rad(y), math.rad(z))
+end
+
+local function part(parent: Instance, props: { [string]: any }): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in pairs(props) do
+		(p :: any)[k] = v
+	end
+	p.Parent = parent
+	return p
+end
+
+local function disc(parent: Instance, pos: Vector3, height: number, diameter: number, props: { [string]: any }): Part
+	props.Shape = Enum.PartType.Cylinder
+	props.Size = Vector3.new(height, diameter, diameter)
+	props.CFrame = CFrame.new(pos) * A(0, 0, 90)
+	return part(parent, props)
+end
+
+local function text(parent: Instance, props: { [string]: any }): TextLabel
+	local t = Instance.new("TextLabel")
+	t.BackgroundTransparency = 1
+	t.TextScaled = true
+	t.Font = Enum.Font.FredokaOne
+	t.TextColor3 = Color3.new(1, 1, 1)
+	t.TextStrokeTransparency = 0.4
+	for k, v in pairs(props) do
+		(t :: any)[k] = v
+	end
+	t.Parent = parent
+	return t
+end
+
+--------------------------------------------------------------------------------
+-- Остров
+--------------------------------------------------------------------------------
+local TOP_MAT = { Enum.Material.Grass, Enum.Material.Sand, Enum.Material.Slate, Enum.Material.Basalt }
+local TOP_COLOR = {
+	Color3.fromRGB(84, 130, 72),
+	Color3.fromRGB(205, 140, 110),
+	Color3.fromRGB(70, 68, 110),
+	Color3.fromRGB(35, 34, 44),
+}
+
+local function buildIsland(isl: Config.Island, root: Instance): Model
+	local m = Instance.new("Model")
+	m.Name = "Island_" .. isl.id
+	local c = isl.center
+	local R = isl.radius
+	-- Верх
+	disc(m, c + Vector3.new(0, -1, 0), 2, R * 2, { Name = "Top", Color = TOP_COLOR[isl.index], Material = TOP_MAT[isl.index] })
+	disc(m, c + Vector3.new(0, -3.2, 0), 2.6, R * 2 + 1.5, { Name = "Edge", Color = Color3.fromRGB(110, 92, 75), Material = Enum.Material.Ground })
+	disc(m, c + Vector3.new(0, -0.05, 0), 0.25, R * 2 + 2.2, { Name = "Rim", Color = isl.color, Material = Enum.Material.Neon, Transparency = 0.35, CanCollide = false })
+	-- Скала снизу: сужающиеся слои
+	local rng = Random.new(isl.index * 31)
+	local y = -4.5
+	local r = R * 0.98
+	local rockColor = Color3.fromRGB(95, 85, 80):Lerp(isl.dark, 0.35)
+	for i = 1, 7 do
+		local h = 5 + i * 1.5
+		disc(m, c + Vector3.new(rng:NextNumber(-3, 3), y - h / 2, rng:NextNumber(-3, 3)), h, r * 2, { Name = "Rock", Color = rockColor:Lerp(Color3.new(0, 0, 0), i * 0.06), Material = Enum.Material.Rock, CastShadow = false })
+		y -= h * 0.8
+		r *= 0.72
+	end
+	-- Каменные выступы по краю
+	for i = 1, 14 do
+		local a = i / 14 * math.pi * 2 + rng:NextNumber(-0.1, 0.1)
+		local s = rng:NextNumber(6, 13)
+		part(m, {
+			Name = "Crag",
+			Size = Vector3.new(s, s * 1.6, s),
+			CFrame = CFrame.new(c + Vector3.new(math.cos(a) * (R - s * 0.3), -s * 0.9, math.sin(a) * (R - s * 0.3))) * A(rng:NextNumber(-20, 20), rng:NextNumber(0, 90), rng:NextNumber(150, 210)),
+			Color = rockColor,
+			Material = Enum.Material.Rock,
+			CastShadow = false,
+		})
+	end
+	-- Висящие кристаллы-огоньки снизу
+	for i = 1, 6 do
+		local a = rng:NextNumber(0, math.pi * 2)
+		local rr = rng:NextNumber(5, R * 0.5)
+		local cr = part(m, {
+			Name = "Hanging",
+			Size = Vector3.new(1.4, rng:NextNumber(3, 6), 1.4),
+			CFrame = CFrame.new(c + Vector3.new(math.cos(a) * rr, -18 - rng:NextNumber(0, 10), math.sin(a) * rr)) * A(0, 45, 0),
+			Color = isl.color,
+			Material = Enum.Material.Neon,
+			CanCollide = false,
+			CastShadow = false,
+		})
+		local l = Instance.new("PointLight")
+		l.Color = isl.color
+		l.Range = 14
+		l.Brightness = 1
+		l.Parent = cr
+	end
+	-- Фонарики по краю
+	for i = 1, 16 do
+		local a = (i + 0.5) / 16 * math.pi * 2
+		local pos = c + Vector3.new(math.cos(a) * (R - 3), 0, math.sin(a) * (R - 3))
+		part(m, { Name = "Post", Size = Vector3.new(0.4, 4, 0.4), CFrame = CFrame.new(pos + Vector3.new(0, 2, 0)), Color = Color3.fromRGB(45, 42, 50), Material = Enum.Material.Metal })
+		local b = part(m, {
+			Name = "PostLamp",
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1, 1, 1),
+			CFrame = CFrame.new(pos + Vector3.new(0, 4.3, 0)),
+			Color = isl.color,
+			Material = Enum.Material.Neon,
+			CanCollide = false,
+		})
+		if i % 2 == 0 then
+			local l = Instance.new("PointLight")
+			l.Color = isl.color
+			l.Range = 16
+			l.Brightness = 0.8
+			l.Parent = b
+		end
+	end
+	-- Название острова
+	local sign = part(m, { Name = "Sign", Size = Vector3.new(1, 1, 1), Transparency = 1, CanCollide = false, CFrame = CFrame.new(c + Vector3.new(0, 40, 0)) })
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.new(40, 0, 8, 0)
+	bb.LightInfluence = 0
+	bb.MaxDistance = 1000
+	bb.Parent = sign
+	text(bb, { Size = UDim2.fromScale(1, 1), Text = isl.icon .. " " .. string.upper(isl.name), TextColor3 = isl.color })
+	m.Parent = root
+	return m
+end
+
+--------------------------------------------------------------------------------
+-- Плитки дерева и связи
+--------------------------------------------------------------------------------
+local function buildTree(root: Instance)
+	local tiles = Instance.new("Folder")
+	tiles.Name = "Tiles"
+	local links = Instance.new("Folder")
+	links.Name = "Links"
+	for _, n in ipairs(Config.Nodes) do
+		local pos = Config.nodePosition(n)
+		local tile = part(tiles, {
+			Name = "Tile_" .. n.id,
+			Size = Vector3.new(Config.TILE_SIZE, 0.8, Config.TILE_SIZE),
+			CFrame = CFrame.new(pos + Vector3.new(0, 0.4, 0)),
+			Color = Color3.fromRGB(60, 60, 70),
+			Material = Enum.Material.SmoothPlastic,
+		})
+		tile:SetAttribute("Node", n.id)
+		-- Неоновая окантовка (её цвет меняет клиент)
+		local border = part(tile, {
+			Name = "Border",
+			Size = Vector3.new(Config.TILE_SIZE + 0.6, 0.6, Config.TILE_SIZE + 0.6),
+			CFrame = CFrame.new(pos + Vector3.new(0, 0.3, 0)),
+			Color = Color3.fromRGB(80, 80, 90),
+			Material = Enum.Material.Neon,
+			CanCollide = false,
+		})
+		border.CastShadow = false
+		-- Карточка над плиткой (размер в метрах, как вывеска)
+		local bb = Instance.new("BillboardGui")
+		bb.Name = "Card"
+		bb.Size = UDim2.new(8, 0, 5.2, 0)
+		bb.StudsOffsetWorldSpace = Vector3.new(0, 4.2, 0)
+		bb.LightInfluence = 0
+		bb.MaxDistance = 140
+		bb.Adornee = tile
+		bb.Parent = tile
+		local card = Instance.new("Frame")
+		card.Name = "Bg"
+		card.Size = UDim2.fromScale(1, 1)
+		card.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+		card.BackgroundTransparency = 0.15
+		card.Parent = bb
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0.12, 0)
+		corner.Parent = card
+		local stroke = Instance.new("UIStroke")
+		stroke.Name = "Stroke"
+		stroke.Thickness = 3
+		stroke.Color = Color3.fromRGB(90, 90, 100)
+		stroke.Parent = card
+		text(card, { Name = "Icon", Size = UDim2.fromScale(0.3, 0.42), Position = UDim2.fromScale(0.03, 0.05), Text = n.icon })
+		text(card, { Name = "Title", Size = UDim2.fromScale(0.64, 0.24), Position = UDim2.fromScale(0.34, 0.06), Text = n.name, TextXAlignment = Enum.TextXAlignment.Left })
+		text(card, { Name = "Level", Size = UDim2.fromScale(0.64, 0.18), Position = UDim2.fromScale(0.34, 0.3), Text = "", Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = Color3.fromRGB(190, 190, 210) })
+		text(card, { Name = "Desc", Size = UDim2.fromScale(0.94, 0.2), Position = UDim2.fromScale(0.03, 0.5), Text = n.desc, Font = Enum.Font.GothamBold, TextColor3 = Color3.fromRGB(220, 220, 235) })
+		text(card, { Name = "Cost", Size = UDim2.fromScale(0.94, 0.24), Position = UDim2.fromScale(0.03, 0.72), Text = "" })
+
+		-- Связи с родителями
+		for _, pid in ipairs(n.parents) do
+			local p = Config.NodeById[pid]
+			local a = Config.nodePosition(p)
+			local b = pos
+			local mid = (a + b) / 2
+			local len = (b - a).Magnitude - Config.TILE_SIZE
+			if len > 0.5 then
+				local link = part(links, {
+					Name = "Link_" .. pid .. "_" .. n.id,
+					Size = Vector3.new(1.2, 0.3, len),
+					CFrame = CFrame.lookAt(mid + Vector3.new(0, 0.15, 0), b + Vector3.new(0, 0.15, 0)),
+					Color = Color3.fromRGB(70, 70, 80),
+					Material = Enum.Material.Neon,
+					CanCollide = false,
+				})
+				link.CastShadow = false
+				link:SetAttribute("From", pid)
+				link:SetAttribute("To", n.id)
+			end
+		end
+	end
+	tiles.Parent = root
+	links.Parent = root
+end
+
+--------------------------------------------------------------------------------
+-- Алтари перерождения
+--------------------------------------------------------------------------------
+export type Altar = { layer: string, part: BasePart, prompt: ProximityPrompt }
+
+local ALTARS = {
+	{ on = "L", layer = "Z" },
+	{ on = "Z", layer = "S" },
+	{ on = "S", layer = "E" },
+}
+
+local function maxZ(island: string): number
+	local m = 0
+	for _, n in ipairs(Config.Nodes) do
+		if n.island == island then
+			m = math.max(m, n.z)
+		end
+	end
+	return m
+end
+
+local function buildAltars(root: Instance): { Altar }
+	local list = {}
+	for _, a in ipairs(ALTARS) do
+		local isl = Config.IslandById[a.on]
+		local target = Config.IslandById[a.layer]
+		-- справа от последнего ряда дерева
+		local z = isl.radius * -0.55 + (maxZ(a.on) - 1) * Config.TILE_STEP
+		local pos = isl.center + Vector3.new(3.2 * Config.TILE_STEP, 0, z)
+		local m = Instance.new("Model")
+		m.Name = "Altar_" .. a.layer
+		disc(m, pos + Vector3.new(0, 0.5, 0), 1, 12, { Color = Color3.fromRGB(50, 48, 60), Material = Enum.Material.Marble })
+		disc(m, pos + Vector3.new(0, 1.05, 0), 0.2, 10, { Name = "Glow", Color = target.color, Material = Enum.Material.Neon, CanCollide = false })
+		local orb = part(m, {
+			Name = "Orb",
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(3, 3, 3),
+			CFrame = CFrame.new(pos + Vector3.new(0, 5, 0)),
+			Color = target.color,
+			Material = Enum.Material.Neon,
+			CanCollide = false,
+		})
+		local l = Instance.new("PointLight")
+		l.Color = target.color
+		l.Range = 20
+		l.Brightness = 2
+		l.Parent = orb
+		local bb = Instance.new("BillboardGui")
+		bb.Name = "Info"
+		bb.Size = UDim2.new(14, 0, 4.5, 0)
+		bb.StudsOffsetWorldSpace = Vector3.new(0, 4.5, 0)
+		bb.LightInfluence = 0
+		bb.MaxDistance = 160
+		bb.Parent = orb
+		text(bb, { Name = "Title", Size = UDim2.fromScale(1, 0.5), Text = target.icon .. " " .. target.name, TextColor3 = target.color })
+		text(bb, { Name = "Sub", Size = UDim2.fromScale(1, 0.4), Position = UDim2.fromScale(0, 0.55), Text = "", Font = Enum.Font.GothamBold })
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.ActionText = "Переродиться"
+		prompt.ObjectText = target.name
+		prompt.HoldDuration = 1
+		prompt.MaxActivationDistance = 12
+		prompt.RequiresLineOfSight = false
+		prompt.Parent = orb
+		m.Parent = root
+		table.insert(list, { layer = a.layer, part = orb, prompt = prompt })
+	end
+	return list
+end
+
+--------------------------------------------------------------------------------
+-- Облака и табло
+--------------------------------------------------------------------------------
+local function buildClouds(root: Instance)
+	local f = Instance.new("Folder")
+	f.Name = "Clouds"
+	local rng = Random.new(5)
+	for _ = 1, 45 do
+		local center = Vector3.new(rng:NextNumber(-500, 300), rng:NextNumber(-90, -40), rng:NextNumber(-500, 250))
+		for _ = 1, rng:NextInteger(3, 6) do
+			local s = rng:NextNumber(18, 40)
+			part(f, {
+				Name = "Cloud",
+				Shape = Enum.PartType.Ball,
+				Size = Vector3.new(s, s, s),
+				CFrame = CFrame.new(center + Vector3.new(rng:NextNumber(-25, 25), rng:NextNumber(-5, 5), rng:NextNumber(-25, 25))),
+				Color = Color3.fromRGB(200, 195, 230),
+				Material = Enum.Material.SmoothPlastic,
+				Transparency = 0.35,
+				CanCollide = false,
+				CastShadow = false,
+			})
+		end
+	end
+	f.Parent = root
+end
+
+local leaderRows: { TextLabel } = {}
+
+local function buildBoard(root: Instance)
+	local isl = Config.Islands[1]
+	local pos = isl.center + Vector3.new(44, 10, -30)
+	local board = part(root, {
+		Name = "Leaderboard",
+		Size = Vector3.new(20, 17, 0.8),
+		CFrame = CFrame.lookAt(pos, isl.center + Vector3.new(0, 10, -20)),
+		Color = Color3.fromRGB(20, 20, 28),
+	})
+	part(root, { Size = Vector3.new(0.8, 10, 0.8), CFrame = CFrame.new(pos + Vector3.new(0, -9, 0)), Color = Color3.fromRGB(45, 42, 50), Material = Enum.Material.Metal })
+	local sg = Instance.new("SurfaceGui")
+	sg.Face = Enum.NormalId.Front
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	sg.PixelsPerStud = 36
+	sg.LightInfluence = 0
+	sg.Parent = board
+	text(sg, { Size = UDim2.new(1, 0, 0, 80), Text = "🏆 Самый яркий свет", TextColor3 = Color3.fromRGB(255, 215, 110) })
+	for i = 1, 10 do
+		leaderRows[i] = text(sg, { Size = UDim2.new(1, -40, 0, 46), Position = UDim2.fromOffset(20, 84 + (i - 1) * 52), Text = "", TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.GothamBold })
+	end
+	leaderRows[1].Text = "Загрузка…"
+end
+
+function World.setLeaderboard(rows: { { name: string, value: number } })
+	for i = 1, 10 do
+		local r = rows[i]
+		if r then
+			local medal = i == 1 and "🥇" or i == 2 and "🥈" or i == 3 and "🥉" or (i .. ".")
+			leaderRows[i].Text = string.format("%s %s — 💡 %s", medal, r.name, Config.format(r.value))
+		else
+			leaderRows[i].Text = i == 1 and "Пока пусто — стань первым!" or ""
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Маяк (основание; этажи надстраивает клиент)
+--------------------------------------------------------------------------------
+World.LIGHTHOUSE_POS = Config.Islands[1].center + Config.LIGHTHOUSE_POS
+
+local function buildLighthouseBase(root: Instance)
+	local p = World.LIGHTHOUSE_POS
+	local m = Instance.new("Model")
+	m.Name = "LighthouseBase"
+	disc(m, p + Vector3.new(0, 0.4, 0), 0.8, 20, { Color = Color3.fromRGB(150, 140, 130), Material = Enum.Material.Cobblestone })
+	disc(m, p + Vector3.new(0, 3, 0), 5, 12, { Color = Color3.fromRGB(235, 232, 222), Material = Enum.Material.Plaster })
+	part(m, { Name = "Door", Size = Vector3.new(0.6, 4, 2.6), CFrame = CFrame.new(p + Vector3.new(6, 2.4, 0)), Color = Color3.fromRGB(110, 70, 45), Material = Enum.Material.WoodPlanks })
+	m.Parent = root
+end
+
+--------------------------------------------------------------------------------
+function World.build(): { altars: { Altar }, spawnCFrame: CFrame }
+	Lighting.ClockTime = 20.6
+	Lighting.Brightness = 2
+	Lighting.Ambient = Color3.fromRGB(70, 65, 95)
+	Lighting.OutdoorAmbient = Color3.fromRGB(110, 100, 140)
+	Lighting.EnvironmentDiffuseScale = 0.6
+	Lighting.EnvironmentSpecularScale = 0.6
+	Lighting.GeographicLatitude = 30
+	local atmo = Instance.new("Atmosphere")
+	atmo.Density = 0.32
+	atmo.Offset = 0.15
+	atmo.Color = Color3.fromRGB(170, 140, 200)
+	atmo.Decay = Color3.fromRGB(90, 70, 140)
+	atmo.Glare = 0.4
+	atmo.Haze = 1.4
+	atmo.Parent = Lighting
+	local bloom = Instance.new("BloomEffect")
+	bloom.Intensity = 0.7
+	bloom.Size = 24
+	bloom.Threshold = 1.2
+	bloom.Parent = Lighting
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Saturation = 0.12
+	cc.Contrast = 0.08
+	cc.TintColor = Color3.fromRGB(255, 245, 240)
+	cc.Parent = Lighting
+	local rays = Instance.new("SunRaysEffect")
+	rays.Intensity = 0.06
+	rays.Spread = 0.6
+	rays.Parent = Lighting
+
+	local root = Instance.new("Folder")
+	root.Name = "World"
+	for _, isl in ipairs(Config.Islands) do
+		buildIsland(isl, root)
+	end
+	buildTree(root)
+	local altars = buildAltars(root)
+	buildClouds(root)
+	buildBoard(root)
+	buildLighthouseBase(root)
+
+	local c = Config.Islands[1].center
+	local spawnPos = c + Vector3.new(0, 0.5, Config.Islands[1].radius * -0.55 - 14)
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "Spawn"
+	spawn.Anchored = true
+	spawn.Size = Vector3.new(8, 0.4, 8)
+	spawn.CFrame = CFrame.new(spawnPos)
+	spawn.Color = Config.Islands[1].color
+	spawn.Material = Enum.Material.Neon
+	spawn.Transparency = 0.3
+	spawn.Duration = 0
+	spawn.Parent = root
+	root.Parent = workspace
+	return { altars = altars, spawnCFrame = CFrame.lookAt(spawnPos + Vector3.new(0, 3, 0), c + Vector3.new(0, 3, 30)) }
+end
+
+-- Точка прибытия на остров (перед корнем дерева)
+function World.islandSpawn(id: string): CFrame
+	local isl = Config.IslandById[id]
+	local pos = isl.center + Vector3.new(0, 3.5, isl.radius * -0.55 - 12)
+	return CFrame.lookAt(pos, isl.center + Vector3.new(0, 3.5, 30))
+end
+
+return World
+]]></ProtectedString></Properties></Item></Item>
+</Item>
+<Item class="StarterPlayer" referent="RBX00000000000000000000000000000008"><Properties><string name="Name">StarterPlayer</string></Properties>
+<Item class="StarterPlayerScripts" referent="RBX00000000000000000000000000000009"><Properties><string name="Name">StarterPlayerScripts</string></Properties>
+<Item class="LocalScript" referent="RBX0000000000000000000000000000000A"><Properties><string name="Name">GameClient</string><ProtectedString name="Source"><![CDATA[-- Клиент: раскраска дерева, покупка стоянием на плитке, мосты, растущие центры островов,
+-- падающие звёзды, интерфейс. Всё, что зависит от прогресса, рисуется только у себя.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+
+local Config = require(ReplicatedStorage:WaitForChild("GameConfig"))
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local function R(name: string): RemoteEvent
+	return Remotes:WaitForChild(name) :: RemoteEvent
+end
+local BuyR, TeleportR, ClaimR, StateR, EventR = R("Buy"), R("Teleport"), R("Claim"), R("State"), R("Event")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
+
+local worldFolder = workspace:WaitForChild("World")
+local tilesFolder = worldFolder:WaitForChild("Tiles")
+local linksFolder = worldFolder:WaitForChild("Links")
+
+local mine = Instance.new("Folder")
+mine.Name = "Mine"
+mine.Parent = workspace
+
+--------------------------------------------------------------------------------
+-- Состояние
+--------------------------------------------------------------------------------
+local state: Config.Data = Config.newData()
+local lps = 0
+local stateTime = os.clock()
+local hasState = false
+
+local function curNow(c: string): number
+	if c == "L" then
+		return state.cur.L + lps * math.min(os.clock() - stateTime, 1)
+	end
+	return state.cur[c] or 0
+end
+
+-- Данные для расчётов с «живым» балансом
+local function liveData(): Config.Data
+	local d = table.clone(state)
+	d.cur = table.clone(state.cur)
+	d.cur.L = curNow("L")
+	return d
+end
+
+--------------------------------------------------------------------------------
+-- Помощники
+--------------------------------------------------------------------------------
+local BG = Color3.fromRGB(16, 15, 26)
+local GOLD = Color3.fromRGB(255, 205, 90)
+local GREEN = Color3.fromRGB(110, 240, 140)
+local REDT = Color3.fromRGB(255, 130, 130)
+local MUTED = Color3.fromRGB(170, 168, 190)
+local WHITE = Color3.new(1, 1, 1)
+
+local function new(className: string, props: { [string]: any }, children: { Instance }?): any
+	local inst = Instance.new(className)
+	for k, v in pairs(props) do
+		if k ~= "Parent" then
+			(inst :: any)[k] = v
+		end
+	end
+	if children then
+		for _, c in ipairs(children) do
+			c.Parent = inst
+		end
+	end
+	if props.Parent then
+		inst.Parent = props.Parent
+	end
+	return inst
+end
+local function corner(r: number?): any
+	return new("UICorner", { CornerRadius = UDim.new(0, r or 12) })
+end
+local function stroke(color: Color3, thickness: number?, transparency: number?): any
+	return new("UIStroke", { Color = color, Thickness = thickness or 2, Transparency = transparency or 0, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
+end
+local function label(props: { [string]: any }): TextLabel
+	if props.BackgroundTransparency == nil then
+		props.BackgroundTransparency = 1
+	end
+	props.Font = props.Font or Enum.Font.FredokaOne
+	props.TextColor3 = props.TextColor3 or WHITE
+	return new("TextLabel", props)
+end
+local function button(props: { [string]: any }, children: { Instance }?): TextButton
+	props.Font = props.Font or Enum.Font.FredokaOne
+	props.TextColor3 = props.TextColor3 or WHITE
+	props.AutoButtonColor = true
+	return new("TextButton", props, children)
+end
+local function pop(inst: GuiObject, from: number?)
+	local sc = inst:FindFirstChildOfClass("UIScale") or new("UIScale", { Parent = inst })
+	sc.Scale = from or 0.9
+	TweenService:Create(sc, TweenInfo.new(0.25, Enum.EasingStyle.Back), { Scale = 1 }):Play()
+end
+local function playSound(id: string, volume: number, pitch: number?)
+	local s = new("Sound", { SoundId = id, Volume = volume, PlaybackSpeed = pitch or 1, Parent = SoundService })
+	s:Play()
+	task.delay(4, function()
+		s:Destroy()
+	end)
+end
+local SND_BUY = "rbxasset://sounds/electronicpingshort.wav"
+local SND_CLICK = "rbxasset://sounds/button.wav"
+local SND_WIN = "rbxasset://sounds/victory.wav"
+
+local function A(x: number, y: number, z: number): CFrame
+	return CFrame.Angles(math.rad(x), math.rad(y), math.rad(z))
+end
+local function wpart(parent: Instance, props: { [string]: any }): Part
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.CastShadow = false
+	p.TopSurface = Enum.SurfaceType.Smooth
+	p.BottomSurface = Enum.SurfaceType.Smooth
+	for k, v in pairs(props) do
+		(p :: any)[k] = v
+	end
+	p.Parent = parent
+	return p
+end
+local function wlight(parent: BasePart, color: Color3, range: number, brightness: number)
+	new("PointLight", { Color = color, Range = range, Brightness = brightness, Parent = parent })
+end
+
+--------------------------------------------------------------------------------
+-- Плитки
+--------------------------------------------------------------------------------
+type Tile = {
+	node: Config.Node,
+	part: BasePart,
+	border: BasePart,
+	bg: Frame,
+	stroke: UIStroke,
+	icon: TextLabel,
+	title: TextLabel,
+	level: TextLabel,
+	desc: TextLabel,
+	cost: TextLabel,
+	burst: ParticleEmitter,
+	status: string,
+}
+local tiles: { [string]: Tile } = {}
+for _, n in ipairs(Config.Nodes) do
+	local p = tilesFolder:WaitForChild("Tile_" .. n.id) :: BasePart
+	local card = p:WaitForChild("Card") :: BillboardGui
+	local bg = card:WaitForChild("Bg") :: Frame
+	local isl = Config.IslandById[n.island]
+	local burst = new("ParticleEmitter", {
+		Texture = "rbxasset://textures/particles/sparkles_main.dds",
+		Color = ColorSequence.new(isl.color),
+		Size = NumberSequence.new(1.2, 0),
+		LightEmission = 1,
+		Lifetime = NumberRange.new(0.6, 1.1),
+		Speed = NumberRange.new(10, 22),
+		SpreadAngle = Vector2.new(70, 70),
+		EmissionDirection = Enum.NormalId.Top,
+		Rate = 0,
+		Parent = p,
+	})
+	tiles[n.id] = {
+		node = n,
+		part = p,
+		border = p:WaitForChild("Border") :: BasePart,
+		bg = bg,
+		stroke = bg:WaitForChild("Stroke") :: UIStroke,
+		icon = bg:WaitForChild("Icon") :: TextLabel,
+		title = bg:WaitForChild("Title") :: TextLabel,
+		level = bg:WaitForChild("Level") :: TextLabel,
+		desc = bg:WaitForChild("Desc") :: TextLabel,
+		cost = bg:WaitForChild("Cost") :: TextLabel,
+		burst = burst,
+		status = "",
+	}
+end
+
+type Link = { part: BasePart, from: string, color: Color3 }
+local links: { Link } = {}
+for _, l in ipairs(linksFolder:GetChildren()) do
+	if l:IsA("BasePart") then
+		local from = l:GetAttribute("From")
+		local to = l:GetAttribute("To")
+		if typeof(from) == "string" and typeof(to) == "string" then
+			local n = Config.NodeById[to]
+			table.insert(links, { part = l, from = from, color = Config.IslandById[n.island].color })
+		end
+	end
+end
+
+local function rateOf(c: string): number
+	if c == "L" then
+		return lps
+	elseif c == "Z" then
+		return Config.passiveZ(state) * Config.gainZ(state)
+	elseif c == "S" then
+		return Config.passiveS(state) * Config.gainS(state)
+	end
+	return 0
+end
+
+local CUR_ICON = { L = "💡", Z = "🌅", S = "✦", E = "🌑" }
+
+local function paintTiles()
+	local d = liveData()
+	local t = os.clock()
+	for id, tile in pairs(tiles) do
+		local n = tile.node
+		local isl = Config.IslandById[n.island]
+		local lvl = Config.lvl(d, id)
+		local open = Config.islandOpen(d, n.island)
+		local available = open and Config.isAvailable(d, n)
+		local status: string
+		if lvl >= n.max then
+			status = "max"
+		elseif not available then
+			status = "locked"
+		elseif Config.canBuy(d, n) then
+			status = "afford"
+		else
+			status = "wait"
+		end
+		local icon = CUR_ICON[n.island]
+		if status ~= tile.status then
+			tile.status = status
+			if status == "max" then
+				tile.part.Color = isl.color:Lerp(WHITE, 0.2)
+				tile.part.Material = Enum.Material.Neon
+				tile.border.Color = GOLD
+				tile.border.Transparency = 0
+				tile.stroke.Color = GOLD
+				tile.bg.BackgroundTransparency = 0.15
+				tile.icon.TextTransparency = 0
+				tile.title.TextColor3 = GOLD
+			elseif status == "locked" then
+				tile.part.Color = Color3.fromRGB(40, 40, 48)
+				tile.part.Material = Enum.Material.SmoothPlastic
+				tile.border.Color = Color3.fromRGB(60, 60, 70)
+				tile.border.Transparency = 0.6
+				tile.stroke.Color = Color3.fromRGB(60, 60, 70)
+				tile.bg.BackgroundTransparency = 0.45
+				tile.icon.TextTransparency = 0.6
+				tile.title.TextColor3 = MUTED
+			else
+				tile.part.Color = lvl > 0 and isl.color:Lerp(Color3.new(0, 0, 0), 0.35) or isl.dark
+				tile.part.Material = lvl > 0 and Enum.Material.Neon or Enum.Material.SmoothPlastic
+				tile.border.Color = isl.color
+				tile.border.Transparency = 0
+				tile.stroke.Color = isl.color
+				tile.bg.BackgroundTransparency = 0.15
+				tile.icon.TextTransparency = 0
+				tile.title.TextColor3 = WHITE
+			end
+		end
+		-- текст
+		tile.level.Text = n.max > 1 and string.format("ур. %d / %d", lvl, n.max) or (lvl > 0 and "куплено" or "")
+		if status == "max" then
+			tile.cost.Text = "★ МАКС"
+			tile.cost.TextColor3 = GOLD
+		elseif status == "locked" then
+			tile.cost.Text = open and "🔒 купи соседнюю" or ("🔒 остров закрыт")
+			tile.cost.TextColor3 = MUTED
+		else
+			local cost = Config.nodeCost(d, n)
+			if status == "afford" then
+				tile.cost.Text = string.format("%s %s ⬇ встань", icon, Config.format(cost))
+				tile.cost.TextColor3 = GREEN
+				local pulse = (math.sin(t * 6) + 1) / 2
+				tile.border.Transparency = pulse * 0.6
+			else
+				local rate = rateOf(n.island)
+				local need = cost - (d.cur[n.island] or 0)
+				local eta = rate > 0 and string.format(" · %s", Config.formatTime(need / rate)) or ""
+				tile.cost.Text = string.format("%s %s%s", icon, Config.format(cost), eta)
+				tile.cost.TextColor3 = REDT
+				tile.border.Transparency = 0.35
+			end
+		end
+	end
+	for _, link in ipairs(links) do
+		local on = Config.lvl(d, link.from) > 0
+		link.part.Color = on and link.color or Color3.fromRGB(55, 55, 65)
+		link.part.Transparency = on and 0 or 0.4
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Покупка: встань на плитку
+--------------------------------------------------------------------------------
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Include
+rayParams.FilterDescendantsInstances = { tilesFolder }
+local pendingUntil = 0
+local standingOn: string? = nil
+
+task.spawn(function()
+	while true do
+		task.wait(0.12)
+		standingOn = nil
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if root and hasState then
+			local hit = workspace:Raycast(root.Position, Vector3.new(0, -8, 0), rayParams)
+			if hit and hit.Instance then
+				local id = hit.Instance:GetAttribute("Node")
+				if typeof(id) == "string" then
+					standingOn = id
+					local n = Config.NodeById[id]
+					if n and os.clock() > pendingUntil and Config.canBuy(liveData(), n) then
+						pendingUntil = os.clock() + 0.3
+						BuyR:FireServer(id)
+					end
+				end
+			end
+		end
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Мосты между островами
+--------------------------------------------------------------------------------
+local bridges: { [string]: Model } = {}
+local function buildBridge(fromId: string, toId: string): Model
+	local a = Config.IslandById[fromId]
+	local b = Config.IslandById[toId]
+	local dir = (b.center - a.center)
+	local flat = Vector3.new(dir.X, 0, dir.Z).Unit
+	local p0 = a.center + flat * (a.radius - 2)
+	local p1 = b.center - flat * (b.radius - 2)
+	local m = Instance.new("Model")
+	m.Name = "Bridge_" .. toId
+	local segs = 18
+	for i = 0, segs - 1 do
+		local t0, t1 = i / segs, (i + 1) / segs
+		local q0 = p0:Lerp(p1, t0)
+		local q1 = p0:Lerp(p1, t1)
+		local mid = (q0 + q1) / 2
+		local len = (q1 - q0).Magnitude + 0.3
+		local cf = CFrame.lookAt(mid, q1)
+		wpart(m, { Size = Vector3.new(10, 0.8, len), CFrame = cf * CFrame.new(0, -0.4, 0), Color = Color3.fromRGB(70, 62, 80), Material = Enum.Material.WoodPlanks, CanCollide = true, CastShadow = true })
+		for _, side in ipairs({ -1, 1 }) do
+			wpart(m, { Size = Vector3.new(0.5, 0.5, len), CFrame = cf * CFrame.new(side * 5, 2.2, 0), Color = b.color, Material = Enum.Material.Neon })
+			if i % 3 == 0 then
+				wpart(m, { Size = Vector3.new(0.4, 2.4, 0.4), CFrame = cf * CFrame.new(side * 5, 1, 0), Color = Color3.fromRGB(50, 46, 60), Material = Enum.Material.Metal, CanCollide = true })
+			end
+		end
+	end
+	m.Parent = mine
+	return m
+end
+local BRIDGES = { { "L", "Z" }, { "Z", "S" }, { "S", "E" } }
+
+--------------------------------------------------------------------------------
+-- Растущие центры островов
+--------------------------------------------------------------------------------
+local centerpieces = Instance.new("Folder")
+centerpieces.Name = "Centerpieces"
+centerpieces.Parent = mine
+type Spin = { part: BasePart, base: CFrame, speed: number, axis: string, phase: number }
+local spins: { Spin } = {}
+
+-- Маяк: этажи растут с уровнями на острове Маяк
+local lighthouseModel: Model? = nil
+local lighthouseFloors = -1
+local beamEnds: { BasePart } = {}
+local lampPart: BasePart? = nil
+local function buildLighthouse(floors: number)
+	if lighthouseModel then
+		lighthouseModel:Destroy()
+	end
+	table.clear(beamEnds)
+	local m = Instance.new("Model")
+	m.Name = "Lighthouse"
+	local base = Config.Islands[1].center + Config.LIGHTHOUSE_POS
+	local y = 5.5
+	for i = 1, floors do
+		local d = math.max(5, 11 - i * 0.35)
+		wpart(m, {
+			Shape = Enum.PartType.Cylinder,
+			Size = Vector3.new(4, d, d),
+			CFrame = CFrame.new(base + Vector3.new(0, y + 2, 0)) * A(0, 0, 90),
+			Color = i % 2 == 0 and Color3.fromRGB(205, 60, 55) or Color3.fromRGB(240, 238, 230),
+			Material = Enum.Material.SmoothPlastic,
+			CanCollide = true,
+			CastShadow = true,
+		})
+		if i % 3 == 0 then
+			wpart(m, { Size = Vector3.new(0.3, 1.6, 1.2), CFrame = CFrame.new(base + Vector3.new(d / 2 + 0.05, y + 2, 0)), Color = GOLD, Material = Enum.Material.Neon })
+		end
+		y += 4
+	end
+	local top = math.max(5, 11 - floors * 0.35)
+	wpart(m, { Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.8, top + 3, top + 3), CFrame = CFrame.new(base + Vector3.new(0, y + 0.4, 0)) * A(0, 0, 90), Color = Color3.fromRGB(45, 45, 50), Material = Enum.Material.Metal })
+	wpart(m, { Shape = Enum.PartType.Cylinder, Size = Vector3.new(4.5, top, top), CFrame = CFrame.new(base + Vector3.new(0, y + 3, 0)) * A(0, 0, 90), Color = Color3.fromRGB(200, 230, 255), Material = Enum.Material.Glass, Transparency = 0.6 })
+	local lampSize = 2 + floors * 0.25
+	local lamp = wpart(m, { Shape = Enum.PartType.Ball, Size = Vector3.one * lampSize, CFrame = CFrame.new(base + Vector3.new(0, y + 3, 0)), Color = Color3.fromRGB(255, 240, 190), Material = Enum.Material.Neon })
+	wlight(lamp, Color3.fromRGB(255, 225, 160), 30 + floors * 3, 2 + floors * 0.15)
+	wpart(m, { Shape = Enum.PartType.Cylinder, Size = Vector3.new(1.2, top + 1, top + 1), CFrame = CFrame.new(base + Vector3.new(0, y + 5.8, 0)) * A(0, 0, 90), Color = Color3.fromRGB(205, 60, 55) })
+	wpart(m, { Shape = Enum.PartType.Ball, Size = Vector3.new(1.4, 1.4, 1.4), CFrame = CFrame.new(base + Vector3.new(0, y + 6.8, 0)), Color = Color3.fromRGB(205, 60, 55) })
+	local att0 = new("Attachment", { Parent = lamp })
+	for i = 1, 2 do
+		local e = wpart(m, { Size = Vector3.new(0.2, 0.2, 0.2), Transparency = 1, CFrame = CFrame.new(base) })
+		local att1 = new("Attachment", { Parent = e })
+		new("Beam", {
+			Attachment0 = att0,
+			Attachment1 = att1,
+			Color = ColorSequence.new(Color3.fromRGB(255, 235, 170)),
+			Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1) }),
+			LightEmission = 1,
+			Width0 = lampSize * 0.7,
+			Width1 = 10 + floors * 1.5,
+			FaceCamera = true,
+			Segments = 2,
+			Parent = lamp,
+		})
+		table.insert(beamEnds, e)
+	end
+	lampPart = lamp
+	m.Parent = centerpieces
+	lighthouseModel = m
+end
+
+-- Солнце Зари
+local sunModel: Model? = nil
+local sunLevel = -1
+local function buildSun(levels: number)
+	if sunModel then
+		sunModel:Destroy()
+	end
+	local isl = Config.IslandById.Z
+	local m = Instance.new("Model")
+	m.Name = "Sun"
+	local base = isl.center + Vector3.new(-36, 0, -12)
+	local h = 8 + math.min(levels, 40) * 1.2
+	local size = 5 + math.min(levels, 40) * 0.35
+	local sun = wpart(m, { Shape = Enum.PartType.Ball, Size = Vector3.one * size, CFrame = CFrame.new(base + Vector3.new(0, h, 0)), Color = Color3.fromRGB(255, 150, 70), Material = Enum.Material.Neon })
+	wlight(sun, Color3.fromRGB(255, 170, 100), 40 + levels * 2, 3)
+	local halo = wpart(m, { Shape = Enum.PartType.Ball, Size = Vector3.one * (size * 1.5), CFrame = sun.CFrame, Color = Color3.fromRGB(255, 200, 120), Material = Enum.Material.ForceField, Transparency = 0.2 })
+	local _ = halo
+	for i = 1, math.min(8 + levels, 24) do
+		local a = i / math.min(8 + levels, 24) * 360
+		local ray = wpart(m, { Size = Vector3.new(0.5, size * 0.7, 0.5), CFrame = sun.CFrame * A(0, 0, a) * CFrame.new(0, size * 0.95, 0), Color = Color3.fromRGB(255, 210, 110), Material = Enum.Material.Neon })
+		table.insert(spins, { part = ray, base = ray.CFrame, speed = 0.2, axis = "sun", phase = 0 })
+	end
+	wpart(m, { Shape = Enum.PartType.Cylinder, Size = Vector3.new(1, 14, 14), CFrame = CFrame.new(base + Vector3.new(0, 0.5, 0)) * A(0, 0, 90), Color = Color3.fromRGB(120, 70, 55), Material = Enum.Material.Sandstone, CanCollide = true })
+	m:SetAttribute("Center", sun.Position)
+	m.Parent = centerpieces
+	sunModel = m
+end
+
+-- Звёзды
+local starsModel: Model? = nil
+local starsLevel = -1
+local function buildStars(levels: number)
+	if starsModel then
+		starsModel:Destroy()
+	end
+	local isl = Config.IslandById.S
+	local m = Instance.new("Model")
+	m.Name = "Stars"
+	local base = isl.center + Vector3.new(-32, 18, -10)
+	local count = math.min(5 + levels * 2, 70)
+	local rng = Random.new(77)
+	local prev: Attachment? = nil
+	for i = 1, count do
+		local p = base + Vector3.new(rng:NextNumber(-16, 16), rng:NextNumber(-8, 14), rng:NextNumber(-16, 16))
+		local s = rng:NextNumber(0.8, 2)
+		local star = wpart(m, { Shape = Enum.PartType.Ball, Size = Vector3.one * s, CFrame = CFrame.new(p), Color = isl.color:Lerp(WHITE, rng:NextNumber(0, 0.7)), Material = Enum.Material.Neon })
+		table.insert(spins, { part = star, base = star.CFrame, speed = 1, axis = "bob", phase = rng:NextNumber(0, 6) })
+		if i <= 10 then
+			local att = new("Attachment", { Parent = star })
+			if prev then
+				new("Beam", { Attachment0 = prev, Attachment1 = att, Color = ColorSequence.new(isl.color), Transparency = NumberSequence.new(0.5), LightEmission = 1, Width0 = 0.25, Width1 = 0.25, FaceCamera = true, Parent = star })
+			end
+			prev = att
+		end
+		if i % 8 == 1 then
+			wlight(star, isl.color, 20, 1)
+		end
+	end
+	m.Parent = centerpieces
+	starsModel = m
+end
+
+-- Затмение
+local eclipseModel: Model? = nil
+local eclipseLevel = -1
+local function buildEclipse(levels: number)
+	if eclipseModel then
+		eclipseModel:Destroy()
+	end
+	local isl = Config.IslandById.E
+	local m = Instance.new("Model")
+	m.Name = "Eclipse"
+	local center = isl.center + Vector3.new(-28, 22, -8)
+	local size = 10 + levels * 0.8
+	local corona = wpart(m, { Shape = Enum.PartType.Ball, Size = Vector3.one * (size * 1.15), CFrame = CFrame.new(center + Vector3.new(0, 0, 0.5)), Color = WHITE, Material = Enum.Material.Neon })
+	wlight(corona, Color3.fromRGB(220, 220, 255), 60, 2)
+	wpart(m, { Shape = Enum.PartType.Ball, Size = Vector3.one * size, CFrame = CFrame.new(center + Vector3.new(0, 0, -1)), Color = Color3.new(0, 0, 0), Material = Enum.Material.SmoothPlastic })
+	for i = 1, math.min(1 + levels, 8) do
+		local ring = wpart(m, { Shape = Enum.PartType.Cylinder, Size = Vector3.new(0.2, size * (1.4 + i * 0.25), size * (1.4 + i * 0.25)), CFrame = CFrame.new(center) * A(i * 25, i * 40, 0), Color = WHITE, Material = Enum.Material.ForceField })
+		table.insert(spins, { part = ring, base = ring.CFrame, speed = 0.3 + i * 0.05, axis = "tumble", phase = i })
+	end
+	m.Parent = centerpieces
+	eclipseModel = m
+end
+
+local function clearSpinsOf(model: Model?)
+	if not model then
+		return
+	end
+	for i = #spins, 1, -1 do
+		if spins[i].part:IsDescendantOf(model) then
+			table.remove(spins, i)
+		end
+	end
+end
+
+local function updateWorld()
+	local d = state
+	-- маяк
+	local floors = math.min(2 + math.floor(Config.islandLevels(d, "L") / 5), 16)
+	if floors ~= lighthouseFloors then
+		local grew = lighthouseFloors >= 0 and floors > lighthouseFloors
+		lighthouseFloors = floors
+		buildLighthouse(floors)
+		if grew then
+			playSound(SND_CLICK, 0.4, 0.8)
+		end
+	end
+	-- острова
+	if Config.islandOpen(d, "Z") then
+		local lv = Config.islandLevels(d, "Z")
+		if lv ~= sunLevel then
+			clearSpinsOf(sunModel)
+			sunLevel = lv
+			buildSun(lv)
+		end
+	end
+	if Config.islandOpen(d, "S") then
+		local lv = Config.islandLevels(d, "S")
+		if lv ~= starsLevel then
+			clearSpinsOf(starsModel)
+			starsLevel = lv
+			buildStars(lv)
+		end
+	end
+	if Config.islandOpen(d, "E") then
+		local lv = Config.islandLevels(d, "E")
+		if lv ~= eclipseLevel then
+			clearSpinsOf(eclipseModel)
+			eclipseLevel = lv
+			buildEclipse(lv)
+		end
+	end
+	-- мосты
+	for _, b in ipairs(BRIDGES) do
+		local open = Config.islandOpen(d, b[2])
+		if open and not bridges[b[2]] then
+			bridges[b[2]] = buildBridge(b[1], b[2])
+		elseif not open and bridges[b[2]] then
+			bridges[b[2]]:Destroy()
+			bridges[b[2]] = nil
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Алтари
+--------------------------------------------------------------------------------
+type AltarUI = { layer: string, sub: TextLabel, prompt: ProximityPrompt, model: Instance }
+local altars: { AltarUI } = {}
+for _, layer in ipairs({ "Z", "S", "E" }) do
+	local model = worldFolder:WaitForChild("Altar_" .. layer)
+	local orb = model:WaitForChild("Orb")
+	local info = orb:WaitForChild("Info")
+	table.insert(altars, { layer = layer, sub = info:WaitForChild("Sub") :: TextLabel, prompt = orb:WaitForChild("ProximityPrompt") :: ProximityPrompt, model = model })
+end
+local GAIN = { Z = Config.gainZ, S = Config.gainS, E = Config.gainE }
+local function updateAltars()
+	for _, a in ipairs(altars) do
+		local open = Config.islandOpen(state, a.layer)
+		local gain = open and GAIN[a.layer](state) or 0
+		if not open then
+			a.sub.Text = "🔒 купи мост в дереве"
+			a.sub.TextColor3 = MUTED
+		elseif gain < 1 then
+			a.sub.Text = "Копи дальше — пока +0"
+			a.sub.TextColor3 = REDT
+		else
+			a.sub.Text = string.format("Удерживай E: +%s %s", Config.format(gain), CUR_ICON[a.layer])
+			a.sub.TextColor3 = GREEN
+		end
+		a.prompt.Enabled = open and gain >= 1
+		a.prompt.ObjectText = string.format("+%s %s · сброс", Config.format(gain), CUR_ICON[a.layer])
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Падающая звезда
+--------------------------------------------------------------------------------
+local golden: { token: string, part: BasePart, pos: Vector3 }? = nil
+local function removeGolden(burst: boolean)
+	local g = golden
+	if not g then
+		return
+	end
+	golden = nil
+	if burst then
+		local e = g.part:FindFirstChildOfClass("ParticleEmitter")
+		if e then
+			e:Emit(60)
+		end
+		TweenService:Create(g.part, TweenInfo.new(0.4), { Size = Vector3.new(8, 8, 8), Transparency = 1 }):Play()
+		task.delay(1, function()
+			g.part:Destroy()
+		end)
+	else
+		g.part:Destroy()
+	end
+end
+local function spawnGolden(token: string, pos: Vector3)
+	removeGolden(false)
+	local star = wpart(mine, { Name = "FallingStar", Shape = Enum.PartType.Ball, Size = Vector3.new(2.4, 2.4, 2.4), CFrame = CFrame.new(pos + Vector3.new(0, 60, 0)), Color = GOLD, Material = Enum.Material.Neon })
+	wlight(star, GOLD, 22, 3)
+	new("ParticleEmitter", {
+		Texture = "rbxasset://textures/particles/sparkles_main.dds",
+		Color = ColorSequence.new(GOLD),
+		Size = NumberSequence.new(1, 0),
+		LightEmission = 1,
+		Lifetime = NumberRange.new(0.8, 1.4),
+		Speed = NumberRange.new(2, 6),
+		SpreadAngle = Vector2.new(180, 180),
+		Rate = 25,
+		Parent = star,
+	})
+	local bb = new("BillboardGui", { Size = UDim2.fromOffset(160, 40), StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0), AlwaysOnTop = true, LightInfluence = 0, MaxDistance = 500, Adornee = star, Parent = star })
+	label({ Size = UDim2.fromScale(1, 1), Text = "⭐ Лови!", TextScaled = true, TextColor3 = GOLD, TextStrokeTransparency = 0.2, Parent = bb })
+	TweenService:Create(star, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { CFrame = CFrame.new(pos) }):Play()
+	golden = { token = token, part = star, pos = pos }
+	playSound(SND_BUY, 0.5, 1.6)
+end
+task.spawn(function()
+	while true do
+		task.wait(0.15)
+		local g = golden
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if g and root and (root.Position - g.pos).Magnitude < 7 then
+			ClaimR:FireServer(g.token)
+			task.wait(0.5)
+		end
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Анимации
+--------------------------------------------------------------------------------
+local beamAngle = 0
+RunService.RenderStepped:Connect(function(dt)
+	local t = os.clock()
+	beamAngle += dt * 0.6
+	local lamp = lampPart
+	if lamp then
+		for i, e in ipairs(beamEnds) do
+			local a = beamAngle + (i - 1) * math.pi
+			e.CFrame = CFrame.new(lamp.Position + Vector3.new(math.cos(a) * 140, -lamp.Position.Y + 2, math.sin(a) * 140))
+		end
+	end
+	for _, s in ipairs(spins) do
+		if s.axis == "bob" then
+			s.part.CFrame = s.base * CFrame.new(0, math.sin(t * s.speed + s.phase) * 0.6, 0)
+		elseif s.axis == "tumble" then
+			s.part.CFrame = s.base * CFrame.Angles(t * s.speed + s.phase, t * s.speed * 0.6, 0)
+		elseif s.axis == "sun" then
+			local c = sunModel and sunModel:GetAttribute("Center")
+			if typeof(c) == "Vector3" then
+				local pv = CFrame.new(c)
+				s.part.CFrame = pv * CFrame.Angles(0, 0, t * s.speed) * pv:Inverse() * s.base
+			end
+		end
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Интерфейс
+--------------------------------------------------------------------------------
+local gui = new("ScreenGui", { Name = "TreeUI", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = playerGui })
+local uiScale = new("UIScale", { Parent = gui })
+local function updateScale()
+	local cam = workspace.CurrentCamera
+	if cam then
+		uiScale.Scale = math.clamp(math.min(cam.ViewportSize.Y / 950, cam.ViewportSize.X / 1500), 0.55, 1.2)
+	end
+end
+updateScale()
+local cam0 = workspace.CurrentCamera
+if cam0 then
+	cam0:GetPropertyChangedSignal("ViewportSize"):Connect(updateScale)
+end
+
+-- Валюты слева
+local curFrame = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 12, 0.42, 0), Size = UDim2.fromOffset(380, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = gui }, {
+	new("UIListLayout", { Padding = UDim.new(0, 8) }),
+})
+type CurRow = { frame: Frame, amount: TextLabel, rate: TextLabel, id: string }
+local curRows: { CurRow } = {}
+for _, isl in ipairs(Config.Islands) do
+	local f = new("Frame", { Size = UDim2.fromOffset(380, 58), BackgroundColor3 = Color3.fromRGB(10, 10, 16), BackgroundTransparency = 0.15, Visible = isl.id == "L", Parent = curFrame }, { corner(12), stroke(isl.color, 2.5) })
+	label({ Position = UDim2.fromOffset(8, 0), Size = UDim2.fromOffset(52, 58), Text = isl.icon, TextSize = 36, TextColor3 = isl.color, Parent = f })
+	local amount = label({ Position = UDim2.fromOffset(64, 4), Size = UDim2.new(1, -74, 0, 30), Text = "0", TextSize = 28, TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = isl.color, Parent = f })
+	local rate = label({ Position = UDim2.fromOffset(64, 33), Size = UDim2.new(1, -74, 0, 20), Text = "", TextSize = 16, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = MUTED, Parent = f })
+	table.insert(curRows, { frame = f, amount = amount, rate = rate, id = isl.id })
+end
+
+-- Цель сверху
+local goal = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.fromOffset(0, 46), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = Color3.fromRGB(10, 10, 16), BackgroundTransparency = 0.2, Parent = gui }, {
+	corner(14),
+	stroke(GOLD, 2, 0.3),
+	new("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16) }),
+})
+local goalText = label({ Size = UDim2.fromOffset(0, 46), AutomaticSize = Enum.AutomaticSize.X, Text = "", TextSize = 20, Parent = goal })
+local goalBarBg = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 60), Size = UDim2.fromOffset(360, 8), BackgroundColor3 = Color3.fromRGB(10, 10, 16), BackgroundTransparency = 0.2, Parent = gui }, { corner(4) })
+local goalBar = new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = GOLD, Parent = goalBarBg }, { corner(4) })
+
+-- Острова снизу
+local bottom = new("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -14), Size = UDim2.fromOffset(0, 62), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, Parent = gui }, {
+	new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10) }),
+})
+type IslandBtn = { button: TextButton, id: string }
+local islandBtns: { IslandBtn } = {}
+for _, isl in ipairs(Config.Islands) do
+	local b = button({ Size = UDim2.fromOffset(170, 62), BackgroundColor3 = isl.color, Text = isl.icon .. " " .. isl.name, TextSize = 24, TextColor3 = Color3.fromRGB(20, 18, 28), Parent = bottom }, { corner(14), stroke(Color3.new(0, 0, 0), 3) })
+	b.Activated:Connect(function()
+		if Config.islandOpen(state, isl.id) then
+			TeleportR:FireServer(isl.id)
+			playSound(SND_CLICK, 0.4, 1.2)
+		else
+			pop(b, 0.9)
+		end
+	end)
+	table.insert(islandBtns, { button = b, id = isl.id })
+end
+
+-- Сообщения
+local toastHolder = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 82), Size = UDim2.fromOffset(600, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Parent = gui }, {
+	new("UIListLayout", { Padding = UDim.new(0, 6), HorizontalAlignment = Enum.HorizontalAlignment.Center }),
+})
+local function toast(text: string, color: Color3?)
+	local t = label({ Size = UDim2.fromOffset(0, 40), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 0.15, BackgroundColor3 = BG, Text = "  " .. text .. "  ", TextSize = 20, TextColor3 = color or GOLD, Parent = toastHolder })
+	corner(12).Parent = t
+	stroke(color or GOLD, 2, 0.3).Parent = t
+	pop(t, 0.6)
+	task.delay(3, function()
+		local info = TweenInfo.new(0.5)
+		TweenService:Create(t, info, { TextTransparency = 1, BackgroundTransparency = 1 }):Play()
+		local st = t:FindFirstChildOfClass("UIStroke")
+		if st then
+			TweenService:Create(st, info, { Transparency = 1 }):Play()
+		end
+		task.wait(0.5)
+		t:Destroy()
+	end)
+	local labels = {}
+	for _, c in ipairs(toastHolder:GetChildren()) do
+		if c:IsA("TextLabel") then
+			table.insert(labels, c)
+		end
+	end
+	if #labels > 4 then
+		labels[1]:Destroy()
+	end
+end
+
+local function modal(title: string, body: string, buttonText: string, color: Color3?)
+	local shade = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.5, ZIndex = 50, Parent = gui })
+	local box = new("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(500, 300), BackgroundColor3 = BG, ZIndex = 51, Parent = shade }, { corner(22), stroke(color or GOLD, 3) })
+	label({ Position = UDim2.fromOffset(20, 16), Size = UDim2.new(1, -40, 0, 44), Text = title, TextSize = 32, TextColor3 = color or GOLD, ZIndex = 52, Parent = box })
+	label({ Position = UDim2.fromOffset(26, 68), Size = UDim2.new(1, -52, 0, 150), Text = body, TextSize = 18, TextWrapped = true, Font = Enum.Font.GothamBold, ZIndex = 52, Parent = box })
+	local ok = button({ AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.fromOffset(230, 54), BackgroundColor3 = Color3.fromRGB(70, 190, 100), Text = buttonText, TextSize = 24, ZIndex = 52, Parent = box }, { corner(14) })
+	pop(box, 0.6)
+	ok.Activated:Connect(function()
+		shade:Destroy()
+	end)
+end
+
+local function flash(color: Color3)
+	local f = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = color, BackgroundTransparency = 0.2, ZIndex = 45, Parent = gui })
+	TweenService:Create(f, TweenInfo.new(1.2), { BackgroundTransparency = 1 }):Play()
+	task.delay(1.3, function()
+		f:Destroy()
+	end)
+end
+
+-- Всплывающая надпись над плиткой
+local function floatText(adornee: BasePart, text: string, color: Color3)
+	local bb = new("BillboardGui", { Size = UDim2.fromOffset(200, 50), StudsOffsetWorldSpace = Vector3.new(0, 7, 0), AlwaysOnTop = true, LightInfluence = 0, Adornee = adornee, Parent = playerGui })
+	local t = label({ Size = UDim2.fromScale(1, 1), Text = text, TextScaled = true, TextColor3 = color, TextStrokeTransparency = 0.1, Parent = bb })
+	local info = TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	TweenService:Create(bb, info, { StudsOffsetWorldSpace = Vector3.new(0, 12, 0) }):Play()
+	TweenService:Create(t, info, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+	task.delay(1.1, function()
+		bb:Destroy()
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- Цель
+--------------------------------------------------------------------------------
+local function currentGoal(d: Config.Data): (string, number)
+	-- сначала: можно переродиться с хорошим приростом
+	for i = #altars, 1, -1 do
+		local a = altars[i]
+		if Config.islandOpen(d, a.layer) then
+			local g = GAIN[a.layer](d)
+			local have = d.cur[a.layer] or 0
+			if g >= 1 and g >= math.max(1, have) then
+				local isl = Config.IslandById[a.layer]
+				return string.format("🎯 Переродись на алтаре: +%s %s (удвоишь %s)", Config.format(g), isl.icon, isl.name), 1
+			end
+		end
+	end
+	-- иначе: самый дешёвый новый узел
+	local best: Config.Node? = nil
+	local bestEta = math.huge
+	for _, n in ipairs(Config.Nodes) do
+		if Config.lvl(d, n.id) == 0 and Config.islandOpen(d, n.island) and Config.isAvailable(d, n) then
+			local cost = Config.nodeCost(d, n)
+			local rate = rateOf(n.island)
+			local have = d.cur[n.island] or 0
+			local eta = have >= cost and 0 or (rate > 0 and (cost - have) / rate or math.huge)
+			if n.kind == "unlock" then
+				eta *= 0.5 -- мосты в приоритете
+			end
+			if eta < bestEta then
+				best, bestEta = n, eta
+			end
+		end
+	end
+	if best then
+		local b = best :: Config.Node
+		local cost = Config.nodeCost(d, b)
+		local have = d.cur[b.island] or 0
+		local isl = Config.IslandById[b.island]
+		if have >= cost then
+			return string.format("🎯 Встань на «%s %s» (%s) — уже хватает!", b.icon, b.name, isl.name), 1
+		end
+		return string.format("🎯 Цель: %s %s — %s %s", b.icon, b.name, CUR_ICON[b.island], Config.format(cost)), math.clamp(have / cost, 0, 1)
+	end
+	return "🎯 Качай уровни на плитках и копи на перерождение", 0
+end
+
+--------------------------------------------------------------------------------
+-- Обновление
+--------------------------------------------------------------------------------
+local function updateUI()
+	if not hasState then
+		return
+	end
+	local d = liveData()
+	for _, row in ipairs(curRows) do
+		local open = Config.islandOpen(d, row.id) or (d.total[row.id] or 0) > 0
+		row.frame.Visible = open
+		if open then
+			row.amount.Text = Config.format(d.cur[row.id] or 0)
+			local rate = rateOf(row.id)
+			local gain = GAIN[row.id] and GAIN[row.id](d) or 0
+			if row.id == "L" then
+				row.rate.Text = "+" .. Config.format(rate) .. "/с"
+			elseif rate > 0 then
+				row.rate.Text = string.format("+%s/с · сброс +%s", Config.format(rate), Config.format(gain))
+			else
+				row.rate.Text = string.format("сброс даст +%s", Config.format(gain))
+			end
+		end
+	end
+	local text, progress = currentGoal(d)
+	goalText.Text = text
+	goalBar.Size = UDim2.fromScale(progress, 1)
+	for _, ib in ipairs(islandBtns) do
+		local open = Config.islandOpen(d, ib.id)
+		local isl = Config.IslandById[ib.id]
+		ib.button.Text = (open and isl.icon or "🔒") .. " " .. isl.name
+		ib.button.BackgroundColor3 = open and isl.color or Color3.fromRGB(60, 58, 70)
+		ib.button.TextColor3 = open and Color3.fromRGB(20, 18, 28) or MUTED
+	end
+	updateAltars()
+end
+
+task.spawn(function()
+	while true do
+		if hasState then
+			paintTiles()
+			updateUI()
+		end
+		task.wait(0.1)
+	end
+end)
+RunService.Heartbeat:Connect(function()
+	if hasState then
+		curRows[1].amount.Text = Config.format(curNow("L"))
+	end
+end)
+
+--------------------------------------------------------------------------------
+-- Сеть
+--------------------------------------------------------------------------------
+StateR.OnClientEvent:Connect(function(s: any)
+	state.cur = s.cur
+	state.run = s.run
+	state.total = s.total
+	state.nodes = s.nodes or {}
+	state.resets = s.resets
+	state.golden = s.golden
+	state.playTime = s.playTime
+	lps = s.lps
+	stateTime = os.clock()
+	local first = not hasState
+	hasState = true
+	updateWorld()
+	if first then
+		paintTiles()
+	end
+end)
+
+local streak = 0
+local lastBuy = 0
+EventR.OnClientEvent:Connect(function(kind: string, a: any, b: any, c: any)
+	if kind == "bought" then
+		local tile = tiles[a]
+		pendingUntil = 0
+		if os.clock() - lastBuy < 1.5 then
+			streak = math.min(streak + 1, 12)
+		else
+			streak = 0
+		end
+		lastBuy = os.clock()
+		playSound(SND_BUY, 0.45, 1 + streak * 0.06)
+		if tile then
+			tile.burst:Emit(18)
+			local n = tile.node
+			local isl = Config.IslandById[n.island]
+			floatText(tile.part, n.max > 1 and string.format("%s ур. %d", n.icon, b) or (n.icon .. " куплено!"), isl.color)
+			tile.status = "" -- перекрасить сразу
+			if n.max > 1 and b == n.max then
+				toast("★ " .. n.name .. " — максимум!", GOLD)
+			elseif b == 1 then
+				toast(n.icon .. " " .. n.name .. ": " .. n.desc, isl.color)
+			end
+		end
+	elseif kind == "islandOpen" then
+		local isl = Config.IslandById[a]
+		playSound(SND_WIN, 0.6)
+		flash(isl.color)
+		modal(isl.icon .. " Открыт остров " .. isl.name .. "!", "По мосту можно дойти пешком или нажать кнопку острова внизу.\n\nНа его алтаре перерождение даёт новую валюту — она усиливает всё, что было до неё.", "Вперёд!", isl.color)
+	elseif kind == "prestige" then
+		local isl = Config.IslandById[a]
+		playSound(SND_WIN, 0.7, 1.1)
+		flash(isl.color)
+		toast(string.format("%s %s! +%s %s", isl.icon, isl.name, Config.format(b), isl.icon), isl.color)
+	elseif kind == "newLayer" then
+		local isl = Config.IslandById[a]
+		modal(
+			isl.icon .. " Первая " .. isl.name .. "!",
+			string.format("Ты получил %s и новый тег над головой.\n\nТрать %s на острове %s — дерево там делает всё предыдущее в разы сильнее, а потом и автоматизирует.", isl.icon, isl.icon, isl.name),
+			"Круто!",
+			isl.color
+		)
+	elseif kind == "goldenSpawn" then
+		spawnGolden(a, b)
+		toast("⭐ Падающая звезда рядом — беги и лови!", GOLD)
+	elseif kind == "goldenGone" then
+		removeGolden(false)
+	elseif kind == "golden" then
+		removeGolden(true)
+		playSound(SND_WIN, 0.5, 1.3)
+		toast("⭐ Звезда поймана! +" .. Config.format(a) .. " 💡", GOLD)
+	elseif kind == "offline" then
+		local extra = (c and c >= 1) and string.format("\n🌅 +%s", Config.format(c)) or ""
+		modal("С возвращением!", string.format("Пока тебя не было (%s), маяк светил сам:\n\n💡 +%s%s", Config.formatTime(b), Config.format(a), extra), "Забрать")
+	elseif kind == "welcome" then
+		modal(
+			"🗼 Маяк",
+			"Свет копится сам. Встань на светящуюся плитку дерева — она купится.\n\nКаждая плитка усиливает свет и открывает следующие. Дойди до моста к Заре — и начнётся настоящее.",
+			"Играть!"
+		)
+	elseif kind == "message" then
+		toast(tostring(a), GOLD)
+	end
+end)
+]]></ProtectedString></Properties></Item>
+</Item>
+</Item>
+</roblox>
