@@ -13,8 +13,9 @@ def view_matrix(yaw, pitch):
     return Rx @ Ry
 
 
-def render(meshes, size=320, yaw=0.6, pitch=-0.25, center=(0, 0, 0), scale=28.0, bg=(236, 242, 250), ground=0.0):
-    W = H = size
+def render(meshes, size=320, yaw=0.6, pitch=-0.25, center=(0, 0, 0), scale=28.0, bg=(236, 242, 250), ground=0.0, width=None, height=None, grid=8, return_proj=False, dist=None):
+    W = width or size
+    H = height or size
     img = np.zeros((H, W, 3), dtype=np.float32)
     img[:] = np.array(bg) / 255
     zbuf = np.full((H, W), np.inf)
@@ -25,17 +26,31 @@ def render(meshes, size=320, yaw=0.6, pitch=-0.25, center=(0, 0, 0), scale=28.0,
     # пол — сетка-подсказка
     meshes = list(meshes)
     g = []
-    for gx in range(-8, 9, 2):
-        g.append((np.array([[gx, ground, -8], [gx + 0.08, ground, -8], [gx + 0.08, ground, 8], [gx, ground, 8]]), [[0, 1, 2], [0, 2, 3]], (200, 205, 215)))
-        g.append((np.array([[-8, ground, gx], [8, ground, gx], [8, ground, gx + 0.08], [-8, ground, gx + 0.08]]), [[0, 1, 2], [0, 2, 3]], (200, 205, 215)))
+    cx0, cz0 = round(center[0] / 4) * 4, round(center[2] / 4) * 4
+    for k in range(-grid, grid + 1, 2):
+        gx = cx0 + k * 2
+        gz = cz0 + k * 2
+        L = grid * 2
+        g.append((np.array([[gx, ground, cz0 - L], [gx + 0.1, ground, cz0 - L], [gx + 0.1, ground, cz0 + L], [gx, ground, cz0 + L]]), [[0, 1, 2], [0, 2, 3]], (200, 205, 215)))
+        g.append((np.array([[cx0 - L, ground, gz], [cx0 + L, ground, gz], [cx0 + L, ground, gz + 0.1], [cx0 - L, ground, gz + 0.1]]), [[0, 1, 2], [0, 2, 3]], (200, 205, 215)))
     allm = [(None, v, f, col) for v, f, col in g] + meshes
     for item in allm:
         _, v, f, col = item
         col = np.array(col) / 255
         vv = (np.asarray(v, float) - c) @ R.T
-        sx = vv[:, 0] * scale + W / 2
-        syy = -vv[:, 1] * scale + H * 0.6
-        z = vv[:, 2]
+        if dist:
+            zc = vv[:, 2] + dist
+            if (zc < 0.5).all():
+                continue
+            zc = np.maximum(zc, 0.5)
+            focal = scale * dist
+            sx = vv[:, 0] * focal / zc + W / 2
+            syy = -vv[:, 1] * focal / zc + H * 0.6
+            z = zc
+        else:
+            sx = vv[:, 0] * scale + W / 2
+            syy = -vv[:, 1] * scale + H * 0.6
+            z = vv[:, 2]
         for (a, b, cc) in f:
             tri = vv[[a, b, cc]]
             n = np.cross(tri[1] - tri[0], tri[2] - tri[0])
@@ -44,6 +59,8 @@ def render(meshes, size=320, yaw=0.6, pitch=-0.25, center=(0, 0, 0), scale=28.0,
                 continue
             n /= ln
             shade = 0.5 + 0.5 * abs(float(np.dot(n, R @ light)))
+            if dist and min(z[a], z[b], z[cc]) <= 0.55:
+                continue
             xs = np.array([sx[a], sx[b], sx[cc]])
             ys = np.array([syy[a], syy[b], syy[cc]])
             zs = np.array([z[a], z[b], z[cc]])
@@ -66,7 +83,17 @@ def render(meshes, size=320, yaw=0.6, pitch=-0.25, center=(0, 0, 0), scale=28.0,
             upd = inside & (zz < sub)
             sub[upd] = zz[upd]
             img[y0:y1 + 1, x0:x1 + 1][upd] = np.clip(col * shade, 0, 1)
-    return Image.fromarray((img * 255).astype(np.uint8))
+    im = Image.fromarray((img * 255).astype(np.uint8))
+    if return_proj:
+        def proj(p):
+            v = (np.asarray(p, float) - c) @ R.T
+            if dist:
+                zc = max(0.5, v[2] + dist)
+                f = scale * dist
+                return (v[0] * f / zc + W / 2, -v[1] * f / zc + H * 0.6, zc)
+            return (v[0] * scale + W / 2, -v[1] * scale + H * 0.6, v[2])
+        return im, proj
+    return im
 
 
 def sheet(images, labels, cols=6):

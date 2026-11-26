@@ -137,6 +137,93 @@ return {
 		Markers = {
 		},
 	},
+	["CloneJabCross"] = {
+		Length = 0.55,
+		Loop = false,
+		Keys = {
+			{ t = 0.0, ease = "smooth", pose = { root = { yaw = 20.0, pitch = 4.0, y = 0.001 }, waist = { pitch = 10.0, yaw = -6.0 }, head = { yaw = -18.0, pitch = 4.0 }, armR = { pitch = 38.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 118.0 }, armL = { pitch = 62.0, out = -4.0, twist = -10.0 }, elbowL = { bend = 75.0 }, legR = { pitch = -22.0, out = 12.0 }, kneeR = { bend = 32.0 }, legL = { pitch = 30.0, out = 8.0 }, kneeL = { bend = 38.0 } } },
+			{ t = 0.07, ease = "smooth", pose = { root = { yaw = 40.0, pitch = 2.0, y = -0.035 }, waist = { pitch = 10.0, yaw = -6.0 }, head = { yaw = -18.0, pitch = 4.0 }, armR = { pitch = 38.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 118.0 }, armL = { pitch = 50.0, out = -4.0, twist = -10.0 }, elbowL = { bend = 110.0 }, legR = { pitch = -22.0, out = 12.0 }, kneeR = { bend = 32.0 }, legL = { pitch = 30.0, out = 8.0 }, kneeL = { bend = 38.0 } } },
+			{ t = 0.12, ease = "snap", pose = { root = { yaw = 34.0, pitch = 8.0, y = -0.044 }, waist = { pitch = 10.0, yaw = -22.0 }, head = { yaw = -16.0 }, armR = { pitch = 40.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 120.0 }, armL = { pitch = 90.0, out = -4.0, twist = 0.0 }, elbowL = { bend = 4.0 }, legR = { pitch = -26.0, out = 12.0 }, kneeR = { bend = 30.0 }, legL = { pitch = 34.0, out = 8.0 }, kneeL = { bend = 40.0 } } },
+			{ t = 0.19, ease = "smooth", pose = { root = { yaw = 44.0, pitch = 8.0, y = -0.072 }, waist = { pitch = 10.0, yaw = -22.0 }, head = { yaw = -16.0 }, armR = { pitch = 40.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 120.0 }, armL = { pitch = 60.0, out = -4.0, twist = 0.0 }, elbowL = { bend = 95.0 }, legR = { pitch = -26.0, out = 12.0 }, kneeR = { bend = 30.0 }, legL = { pitch = 34.0, out = 8.0 }, kneeL = { bend = 40.0 } } },
+			{ t = 0.25, ease = "snap", pose = { root = { yaw = -24.0, pitch = 16.0, y = 0.071 }, waist = { pitch = 16.0, yaw = -20.0 }, head = { yaw = 18.0 }, armR = { pitch = 92.0, out = -10.0, twist = 0.0 }, elbowR = { bend = 2.0 }, armL = { pitch = 42.0, out = 8.0 }, elbowL = { bend = 125.0 }, legR = { pitch = -42.0, out = 12.0, twist = 20.0 }, kneeR = { bend = 18.0 }, legL = { pitch = 40.0, out = 8.0 }, kneeL = { bend = 48.0 } } },
+			{ t = 0.38, ease = "smooth", pose = { root = { yaw = -24.0, pitch = 16.0, y = 0.071 }, waist = { pitch = 16.0, yaw = -20.0 }, head = { yaw = 18.0 }, armR = { pitch = 90.0, out = -10.0, twist = 0.0 }, elbowR = { bend = 8.0 }, armL = { pitch = 42.0, out = 8.0 }, elbowL = { bend = 125.0 }, legR = { pitch = -42.0, out = 12.0, twist = 20.0 }, kneeR = { bend = 18.0 }, legL = { pitch = 40.0, out = 8.0 }, kneeL = { bend = 48.0 } } },
+			{ t = 0.55, ease = "smooth", pose = { root = { yaw = 20.0, pitch = 4.0, y = 0.001 }, waist = { pitch = 10.0, yaw = -6.0 }, head = { yaw = -18.0, pitch = 4.0 }, armR = { pitch = 38.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 118.0 }, armL = { pitch = 62.0, out = -4.0, twist = -10.0 }, elbowL = { bend = 75.0 }, legR = { pitch = -22.0, out = 12.0 }, kneeR = { bend = 32.0 }, legL = { pitch = 30.0, out = 8.0 }, kneeL = { bend = 38.0 } } },
+		},
+		Markers = {
+			{ t = 0.12, name = "hit" },
+			{ t = 0.25, name = "hit" },
+		},
+	},
+	["CloneRoundhouse"] = {
+		Length = 0.6,
+		Loop = false,
+		Keys = {
+			{ t = 0.0, ease = "smooth", pose = { root = { yaw = 20.0, pitch = 4.0, y = 0.001 }, waist = { pitch = 10.0, yaw = -6.0 }, head = { yaw = -18.0, pitch = 4.0 }, armR = { pitch = 38.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 118.0 }, armL = { pitch = 62.0, out = -4.0, twist = -10.0 }, elbowL = { bend = 75.0 }, legR = { pitch = -22.0, out = 12.0 }, kneeR = { bend = 32.0 }, legL = { pitch = 30.0, out = 8.0 }, kneeL = { bend = 38.0 } } },
+			{ t = 0.12, ease = "out", pose = { root = { yaw = -30.0, pitch = -4.0, y = 0.169 }, waist = { pitch = -4.0, yaw = 10.0 }, head = { yaw = 30.0 }, armR = { pitch = 20.0, out = 40.0 }, elbowR = { bend = 60.0 }, armL = { pitch = 60.0, out = -10.0 }, elbowL = { bend = 110.0 }, legR = { pitch = 95.0, out = 40.0, twist = -40.0 }, kneeR = { bend = 130.0 }, legL = { pitch = -6.0, out = 6.0 }, kneeL = { bend = 20.0 } } },
+			{ t = 0.2, ease = "snap", pose = { root = { yaw = -80.0, pitch = -6.0, roll = -18.0, y = -0.271 }, waist = { pitch = -10.0, yaw = 12.0, roll = -8.0 }, head = { yaw = 60.0 }, armR = { pitch = -30.0, out = 60.0 }, elbowR = { bend = 30.0 }, armL = { pitch = 70.0, out = -10.0 }, elbowL = { bend = 100.0 }, legR = { pitch = 40.0, out = 88.0, twist = -30.0 }, kneeR = { bend = 4.0 }, legL = { pitch = -4.0, out = 4.0 }, kneeL = { bend = 16.0 } } },
+			{ t = 0.36, ease = "smooth", pose = { root = { yaw = -80.0, pitch = -6.0, roll = -18.0, y = -0.271 }, waist = { pitch = -10.0, yaw = 12.0, roll = -8.0 }, head = { yaw = 60.0 }, armR = { pitch = -30.0, out = 60.0 }, elbowR = { bend = 30.0 }, armL = { pitch = 70.0, out = -10.0 }, elbowL = { bend = 100.0 }, legR = { pitch = 30.0, out = 80.0, twist = -30.0 }, kneeR = { bend = 4.0 }, legL = { pitch = -4.0, out = 4.0 }, kneeL = { bend = 16.0 } } },
+			{ t = 0.48, ease = "smooth", pose = { root = { yaw = -10.0, pitch = -4.0, y = 0.179 }, waist = { pitch = -4.0, yaw = 10.0 }, head = { yaw = 30.0 }, armR = { pitch = 20.0, out = 40.0 }, elbowR = { bend = 60.0 }, armL = { pitch = 60.0, out = -10.0 }, elbowL = { bend = 110.0 }, legR = { pitch = 95.0, out = 40.0, twist = -40.0 }, kneeR = { bend = 130.0 }, legL = { pitch = -6.0, out = 6.0 }, kneeL = { bend = 20.0 } } },
+			{ t = 0.6, ease = "smooth", pose = { root = { yaw = 20.0, pitch = 4.0, y = 0.001 }, waist = { pitch = 10.0, yaw = -6.0 }, head = { yaw = -18.0, pitch = 4.0 }, armR = { pitch = 38.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 118.0 }, armL = { pitch = 62.0, out = -4.0, twist = -10.0 }, elbowL = { bend = 75.0 }, legR = { pitch = -22.0, out = 12.0 }, kneeR = { bend = 32.0 }, legL = { pitch = 30.0, out = 8.0 }, kneeL = { bend = 38.0 } } },
+		},
+		Markers = {
+			{ t = 0.2, name = "hit" },
+		},
+	},
+	["CloneUppercut"] = {
+		Length = 0.55,
+		Loop = false,
+		Keys = {
+			{ t = 0.0, ease = "smooth", pose = { root = { yaw = 20.0, pitch = 4.0, y = 0.001 }, waist = { pitch = 10.0, yaw = -6.0 }, head = { yaw = -18.0, pitch = 4.0 }, armR = { pitch = 38.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 118.0 }, armL = { pitch = 62.0, out = -4.0, twist = -10.0 }, elbowL = { bend = 75.0 }, legR = { pitch = -22.0, out = 12.0 }, kneeR = { bend = 32.0 }, legL = { pitch = 30.0, out = 8.0 }, kneeL = { bend = 38.0 } } },
+			{ t = 0.12, ease = "out", pose = { root = { yaw = 30.0, pitch = 20.0, y = -0.501 }, waist = { pitch = 26.0, yaw = -10.0 }, head = { yaw = -14.0, pitch = -10.0 }, armR = { pitch = -10.0, out = 20.0 }, elbowR = { bend = 100.0 }, armL = { pitch = 60.0, out = 0.0 }, elbowL = { bend = 110.0 }, legR = { pitch = -24.0, out = 14.0 }, kneeR = { bend = 80.0 }, legL = { pitch = 60.0, out = 10.0 }, kneeL = { bend = 100.0 } } },
+			{ t = 0.19, ease = "snap", pose = { root = { yaw = -10.0, pitch = -10.0, y = 0.6 }, waist = { pitch = -16.0, yaw = -18.0 }, head = { yaw = 10.0, pitch = -20.0 }, armR = { pitch = 165.0, out = -8.0 }, elbowR = { bend = 40.0 }, armL = { pitch = 10.0, out = 20.0 }, elbowL = { bend = 80.0 }, legR = { pitch = -20.0, out = 10.0 }, kneeR = { bend = 6.0 }, legL = { pitch = 10.0, out = 8.0 }, kneeL = { bend = 10.0 } } },
+			{ t = 0.36, ease = "smooth", pose = { root = { yaw = -10.0, pitch = -10.0, y = 0.4 }, waist = { pitch = -16.0, yaw = -18.0 }, head = { yaw = 10.0, pitch = -20.0 }, armR = { pitch = 160.0, out = -8.0 }, elbowR = { bend = 40.0 }, armL = { pitch = 10.0, out = 20.0 }, elbowL = { bend = 80.0 }, legR = { pitch = -20.0, out = 10.0 }, kneeR = { bend = 6.0 }, legL = { pitch = 10.0, out = 8.0 }, kneeL = { bend = 10.0 } } },
+			{ t = 0.55, ease = "smooth", pose = { root = { yaw = 20.0, pitch = 4.0, y = 0.001 }, waist = { pitch = 10.0, yaw = -6.0 }, head = { yaw = -18.0, pitch = 4.0 }, armR = { pitch = 38.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 118.0 }, armL = { pitch = 62.0, out = -4.0, twist = -10.0 }, elbowL = { bend = 75.0 }, legR = { pitch = -22.0, out = 12.0 }, kneeR = { bend = 32.0 }, legL = { pitch = 30.0, out = 8.0 }, kneeL = { bend = 38.0 } } },
+		},
+		Markers = {
+			{ t = 0.19, name = "hit" },
+		},
+	},
+	["DashIn"] = {
+		Length = 0.25,
+		Loop = false,
+		Keys = {
+			{ t = 0.0, ease = "smooth", pose = { root = { yaw = 30.0, pitch = 4.0, y = -0.01 }, waist = { pitch = 10.0, yaw = -12.0 }, head = { yaw = -18.0, pitch = 4.0 }, armR = { pitch = 38.0, out = 16.0, twist = -20.0 }, elbowR = { bend = 118.0 }, armL = { pitch = 62.0, out = -4.0, twist = -10.0 }, elbowL = { bend = 75.0 }, legR = { pitch = -22.0, out = 12.0 }, kneeR = { bend = 32.0 }, legL = { pitch = 30.0, out = 8.0 }, kneeL = { bend = 38.0 } } },
+			{ t = 0.08, ease = "out", pose = { root = { pitch = 38.0, y = -0.274 }, waist = { pitch = 20.0 }, head = { pitch = -30.0 }, armR = { pitch = -60.0, out = 20.0 }, elbowR = { bend = 40.0 }, armL = { pitch = -60.0, out = 20.0 }, elbowL = { bend = 40.0 }, legR = { pitch = -50.0, out = 6.0 }, kneeR = { bend = 60.0 }, legL = { pitch = 50.0, out = 6.0 }, kneeL = { bend = 70.0 } } },
+			{ t = 0.25, ease = "smooth", pose = { root = { pitch = 38.0, y = -0.274 }, waist = { pitch = 20.0 }, head = { pitch = -30.0 }, armR = { pitch = -60.0, out = 20.0 }, elbowR = { bend = 40.0 }, armL = { pitch = -60.0, out = 20.0 }, elbowL = { bend = 40.0 }, legR = { pitch = -50.0, out = 6.0 }, kneeR = { bend = 60.0 }, legL = { pitch = 50.0, out = 6.0 }, kneeL = { bend = 70.0 } } },
+		},
+		Markers = {
+		},
+	},
+	["HurtL"] = {
+		Length = 0.35,
+		Loop = false,
+		Keys = {
+			{ t = 0.0, ease = "snap", pose = { root = { pitch = -12.0, yaw = -18.0, roll = 8.0, y = 0.201 }, waist = { pitch = -16.0, yaw = -20.0 }, head = { pitch = -28.0, yaw = -30.0 }, armR = { pitch = 40.0, out = 50.0 }, elbowR = { bend = 60.0 }, armL = { pitch = 20.0, out = 40.0 }, elbowL = { bend = 30.0 }, legR = { pitch = 14.0 }, kneeR = { bend = 20.0 }, legL = { pitch = -12.0 }, kneeL = { bend = 26.0 } } },
+			{ t = 0.35, ease = "smooth", pose = { root = { pitch = -4.0, yaw = -18.0, roll = 8.0, y = 0.217 }, waist = { pitch = -16.0, yaw = -20.0 }, head = { pitch = -28.0, yaw = -30.0 }, armR = { pitch = 40.0, out = 50.0 }, elbowR = { bend = 60.0 }, armL = { pitch = 20.0, out = 40.0 }, elbowL = { bend = 30.0 }, legR = { pitch = 14.0 }, kneeR = { bend = 20.0 }, legL = { pitch = -12.0 }, kneeL = { bend = 26.0 } } },
+		},
+		Markers = {
+		},
+	},
+	["HurtR"] = {
+		Length = 0.35,
+		Loop = false,
+		Keys = {
+			{ t = 0.0, ease = "snap", pose = { root = { pitch = -12.0, yaw = 18.0, roll = -8.0, y = 0.201 }, waist = { pitch = -16.0, yaw = 20.0 }, head = { pitch = -28.0, yaw = 30.0 }, armR = { pitch = 20.0, out = 40.0 }, elbowR = { bend = 30.0 }, armL = { pitch = 40.0, out = 50.0 }, elbowL = { bend = 60.0 }, legR = { pitch = -12.0 }, kneeR = { bend = 26.0 }, legL = { pitch = 14.0 }, kneeL = { bend = 20.0 } } },
+			{ t = 0.35, ease = "smooth", pose = { root = { pitch = -4.0, yaw = 18.0, roll = -8.0, y = 0.217 }, waist = { pitch = -16.0, yaw = 20.0 }, head = { pitch = -28.0, yaw = 30.0 }, armR = { pitch = 20.0, out = 40.0 }, elbowR = { bend = 30.0 }, armL = { pitch = 40.0, out = 50.0 }, elbowL = { bend = 60.0 }, legR = { pitch = -12.0 }, kneeR = { bend = 26.0 }, legL = { pitch = 14.0 }, kneeL = { bend = 20.0 } } },
+		},
+		Markers = {
+		},
+	},
+	["HurtBend"] = {
+		Length = 0.4,
+		Loop = false,
+		Keys = {
+			{ t = 0.0, ease = "snap", pose = { root = { pitch = 22.0, y = -0.086 }, waist = { pitch = 40.0 }, head = { pitch = 20.0 }, armR = { pitch = 30.0, out = -10.0 }, elbowR = { bend = 80.0 }, armL = { pitch = 30.0, out = -10.0 }, elbowL = { bend = 80.0 }, legR = { pitch = 10.0 }, kneeR = { bend = 40.0 }, legL = { pitch = -8.0 }, kneeL = { bend = 30.0 } } },
+			{ t = 0.4, ease = "smooth", pose = { root = { pitch = 22.0, y = -0.086 }, waist = { pitch = 32.0 }, head = { pitch = 20.0 }, armR = { pitch = 30.0, out = -10.0 }, elbowR = { bend = 80.0 }, armL = { pitch = 30.0, out = -10.0 }, elbowL = { bend = 80.0 }, legR = { pitch = 10.0 }, kneeR = { bend = 40.0 }, legL = { pitch = -8.0 }, kneeL = { bend = 30.0 } } },
+		},
+		Markers = {
+		},
+	},
 	["Hurt"] = {
 		Length = 0.3,
 		Loop = false,

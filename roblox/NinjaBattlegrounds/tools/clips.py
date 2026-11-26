@@ -209,6 +209,72 @@ BOOST = P(root=dict(pitch=62), waist=dict(pitch=20), head=dict(pitch=-30),
           legR=dict(pitch=60, out=12), kneeR=dict(bend=120), legL=dict(pitch=60, out=12), kneeL=dict(bend=120))
 clip("CloneBoost", 0.4, [K(0.0, STANCE), K(0.2, BOOST, "out"), K(0.4, BOOST)])
 
+
+# ---------- Чёткие удары двойников (замах -> удар -> отыгрыш) ----------
+GUARD = merge(STANCE, root=dict(yaw=20), waist=dict(yaw=-6))
+JAB = P(root=dict(yaw=34, pitch=8), waist=dict(pitch=10, yaw=-22), head=dict(yaw=-16),
+        armL=dict(pitch=90, out=-4, twist=0), elbowL=dict(bend=4), armR=dict(pitch=40, out=16, twist=-20), elbowR=dict(bend=120),
+        legR=dict(pitch=-26, out=12), kneeR=dict(bend=30), legL=dict(pitch=34, out=8), kneeL=dict(bend=40))
+CROSS = P(root=dict(yaw=-24, pitch=16), waist=dict(pitch=16, yaw=-20), head=dict(yaw=18),
+          armR=dict(pitch=92, out=-10, twist=0), elbowR=dict(bend=2), armL=dict(pitch=42, out=8), elbowL=dict(bend=125),
+          legR=dict(pitch=-42, out=12, twist=20), kneeR=dict(bend=18), legL=dict(pitch=40, out=8), kneeL=dict(bend=48))
+clip("CloneJabCross", 0.55, [
+    K(0.0, GUARD),
+    K(0.07, merge(GUARD, root=dict(yaw=40, pitch=2), armL=dict(pitch=50), elbowL=dict(bend=110))),
+    K(0.12, JAB, "snap"),
+    K(0.19, merge(JAB, armL=dict(pitch=60), elbowL=dict(bend=95), root=dict(yaw=44))),
+    K(0.25, CROSS, "snap"),
+    K(0.38, merge(CROSS, armR=dict(pitch=90), elbowR=dict(bend=8))),
+    K(0.55, GUARD, "smooth"),
+], markers=[dict(t=0.12, name="hit"), dict(t=0.25, name="hit")])
+
+CHAMBER = P(root=dict(yaw=-30, pitch=-4), waist=dict(pitch=-4, yaw=10), head=dict(yaw=30),
+            armR=dict(pitch=20, out=40), elbowR=dict(bend=60), armL=dict(pitch=60, out=-10), elbowL=dict(bend=110),
+            legR=dict(pitch=95, out=40, twist=-40), kneeR=dict(bend=130), legL=dict(pitch=-6, out=6), kneeL=dict(bend=20))
+ROUNDHOUSE = P(root=dict(yaw=-80, pitch=-6, roll=-18), waist=dict(pitch=-10, yaw=12, roll=-8), head=dict(yaw=60),
+               armR=dict(pitch=-30, out=60), elbowR=dict(bend=30), armL=dict(pitch=70, out=-10), elbowL=dict(bend=100),
+               legR=dict(pitch=40, out=88, twist=-30), kneeR=dict(bend=4), legL=dict(pitch=-4, out=4), kneeL=dict(bend=16))
+clip("CloneRoundhouse", 0.6, [
+    K(0.0, GUARD),
+    K(0.12, CHAMBER, "out"),
+    K(0.2, ROUNDHOUSE, "snap"),
+    K(0.36, merge(ROUNDHOUSE, legR=dict(out=80, pitch=30))),
+    K(0.48, merge(CHAMBER, root=dict(yaw=-10))),
+    K(0.6, GUARD, "smooth"),
+], markers=[dict(t=0.2, name="hit")])
+
+DIP = P(root=dict(yaw=30, pitch=20), waist=dict(pitch=26, yaw=-10), head=dict(yaw=-14, pitch=-10),
+        armR=dict(pitch=-10, out=20), elbowR=dict(bend=100), armL=dict(pitch=60, out=0), elbowL=dict(bend=110),
+        legR=dict(pitch=-24, out=14), kneeR=dict(bend=80), legL=dict(pitch=60, out=10), kneeL=dict(bend=100))
+UPPER = P(root=dict(yaw=-10, pitch=-10, y=0.6), waist=dict(pitch=-16, yaw=-18), head=dict(yaw=10, pitch=-20),
+          armR=dict(pitch=165, out=-8), elbowR=dict(bend=40), armL=dict(pitch=10, out=20), elbowL=dict(bend=80),
+          legR=dict(pitch=-20, out=10), kneeR=dict(bend=6), legL=dict(pitch=10, out=8), kneeL=dict(bend=10))
+clip("CloneUppercut", 0.55, [
+    K(0.0, GUARD),
+    K(0.12, DIP, "out"),
+    K(0.19, UPPER, "snap", ground=False),
+    K(0.36, merge(UPPER, root=dict(y=0.4), armR=dict(pitch=160)), ground=False),
+    K(0.55, GUARD, "smooth"),
+], markers=[dict(t=0.19, name="hit")])
+
+DASH = P(root=dict(pitch=38), waist=dict(pitch=20), head=dict(pitch=-30),
+         armR=dict(pitch=-60, out=20), elbowR=dict(bend=40), armL=dict(pitch=-60, out=20), elbowL=dict(bend=40),
+         legR=dict(pitch=-50, out=6), kneeR=dict(bend=60), legL=dict(pitch=50, out=6), kneeL=dict(bend=70))
+clip("DashIn", 0.25, [K(0.0, STANCE), K(0.08, DASH, "out"), K(0.25, DASH)])
+
+HURT_L = P(root=dict(pitch=-12, yaw=-18, roll=8), waist=dict(pitch=-16, yaw=-20), head=dict(pitch=-28, yaw=-30),
+           armR=dict(pitch=40, out=50), elbowR=dict(bend=60), armL=dict(pitch=20, out=40), elbowL=dict(bend=30),
+           legR=dict(pitch=14), kneeR=dict(bend=20), legL=dict(pitch=-12), kneeL=dict(bend=26))
+HURT_R = P(root=dict(pitch=-12, yaw=18, roll=-8), waist=dict(pitch=-16, yaw=20), head=dict(pitch=-28, yaw=30),
+           armR=dict(pitch=20, out=40), elbowR=dict(bend=30), armL=dict(pitch=40, out=50), elbowL=dict(bend=60),
+           legR=dict(pitch=-12), kneeR=dict(bend=26), legL=dict(pitch=14), kneeL=dict(bend=20))
+HURT_BEND = P(root=dict(pitch=22), waist=dict(pitch=40), head=dict(pitch=20),
+              armR=dict(pitch=30, out=-10), elbowR=dict(bend=80), armL=dict(pitch=30, out=-10), elbowL=dict(bend=80),
+              legR=dict(pitch=10), kneeR=dict(bend=40), legL=dict(pitch=-8), kneeL=dict(bend=30))
+clip("HurtL", 0.35, [K(0.0, HURT_L, "snap"), K(0.35, merge(HURT_L, root=dict(pitch=-4)))])
+clip("HurtR", 0.35, [K(0.0, HURT_R, "snap"), K(0.35, merge(HURT_R, root=dict(pitch=-4)))])
+clip("HurtBend", 0.4, [K(0.0, HURT_BEND, "snap"), K(0.4, merge(HURT_BEND, waist=dict(pitch=32)))])
+
 # ---------- Реакции врага ----------
 HURT = P(root=dict(pitch=-16), waist=dict(pitch=-14), head=dict(pitch=-30),
          armR=dict(pitch=30, out=40), elbowR=dict(bend=40), armL=dict(pitch=30, out=40), elbowL=dict(bend=40),
