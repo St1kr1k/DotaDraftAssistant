@@ -87,14 +87,8 @@ public sealed class RecognitionOptions
 public sealed class ScoringOptions
 {
     /// <summary>Версия набора весов. При обновлении приложения со сменой весов старые сохранённые настройки оценки сбрасываются.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
     public int Version { get; set; }
-
-    /// <summary>
-    /// Предлагать только из ваших героев (★ основной и ♥ комфорт), без забаненных и уже выбранных.
-    /// Если отмеченных героев нет (или ни один не играется на вашей позиции) — из всех героев.
-    /// </summary>
-    public bool PoolOnly { get; set; } = true;
 
     /// <summary>
     /// Веса раннего пика (о врагах почти ничего не известно): важнее ваша позиция, сила героя в патче
@@ -105,8 +99,8 @@ public sealed class ScoringOptions
         Weights = new()
         {
             [ScoreComponent.RoleFit] = 10,
-            [ScoreComponent.Comfort] = 10,
-            [ScoreComponent.Meta] = 20,
+            [ScoreComponent.Comfort] = 15,
+            [ScoreComponent.Meta] = 15,
             [ScoreComponent.Safety] = 15,
             [ScoreComponent.Synergy] = 10,
             [ScoreComponent.Pairs] = 5,
@@ -117,18 +111,18 @@ public sealed class ScoringOptions
 
     /// <summary>
     /// Веса позднего пика (враги известны): линия и вся вражеская команда весят вместе 55%,
-    /// мета и ваши отметки — 15%. Сумма — 100.
+    /// мета 10%, ваши отметки ★/♥ — 10%. Сумма — 100.
     /// </summary>
     public ScoringWeights WeightsLate { get; set; } = new()
     {
         Weights = new()
         {
             [ScoreComponent.RoleFit] = 5,
-            [ScoreComponent.Comfort] = 5,
+            [ScoreComponent.Comfort] = 10,
             [ScoreComponent.Meta] = 10,
             [ScoreComponent.Safety] = 5,
             [ScoreComponent.Synergy] = 10,
-            [ScoreComponent.Pairs] = 10,
+            [ScoreComponent.Pairs] = 5,
             [ScoreComponent.Lane] = 25,
             [ScoreComponent.Counter] = 30,
         },
@@ -160,8 +154,9 @@ public sealed class ScoringOptions
     /// <summary>Отклонение доли выигранных линий для максимальной оценки линии.</summary>
     public double LaneFullScaleDelta { get; set; } = 0.08;
 
-    public double MainHeroValue { get; set; } = 0.7;
-    public double ComfortHeroValue { get; set; } = 0.4;
+    /// <summary>Плюс за отмеченных героев: предлагаются все герои, но ★/♥ заметно выше при прочих равных.</summary>
+    public double MainHeroValue { get; set; } = 1.0;
+    public double ComfortHeroValue { get; set; } = 0.7;
     public double SoftAvoidValue { get; set; } = -1.0;
 }
 
