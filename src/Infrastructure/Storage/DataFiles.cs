@@ -17,6 +17,17 @@ public static class DataFiles
     public static string HeroesJson(string dataDir) => Path.Combine(dataDir, "heroes", "heroes.json");
     public static string HeroesDir(string dataDir) => Path.Combine(dataDir, "heroes");
     public static string PatchDir(string dataDir) => Path.Combine(dataDir, "patch");
+
+    /// <summary>
+    /// Версия игры STRATZ («7.42a») относится к патчу OpenDota («7.42»): совпадает или отличается только буквой.
+    /// STRATZ заводит новую версию с опозданием — до этого его «текущая» версия = прошлый патч.
+    /// </summary>
+    public static bool SamePatch(string gameVersion, string patch)
+    {
+        if (string.IsNullOrEmpty(gameVersion) || string.IsNullOrEmpty(patch)) return false;
+        if (!gameVersion.StartsWith(patch, StringComparison.OrdinalIgnoreCase)) return false;
+        return gameVersion.Length == patch.Length || char.IsLetter(gameVersion[patch.Length]);
+    }
 }
 
 public sealed class HeroDto

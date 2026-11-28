@@ -88,6 +88,16 @@ internal static class StratzFetcher
             int median = perHero.Count > 0 ? perHero[perHero.Count / 2] : 0;
             if (median >= 3000 || used.Count >= 3) break;
         }
+        // STRATZ заводит новый патч с опозданием: пока его последняя версия — прошлый патч (7.41e при 7.42 у OpenDota),
+        // «винрейт за патч» был бы статистикой старого патча. Тогда остаётся OpenDota (последние недели).
+        var odPatch = ReadOpenDotaPatch(patchDir);
+        string newest = names.GetValueOrDefault(versions[0], "");
+        if (odPatch is not null && !DataFiles.SamePatch(newest, odPatch))
+        {
+            Console.WriteLine($"STRATZ винрейты патча: последняя версия STRATZ «{newest}», а патч {odPatch} — оставляю статистику OpenDota");
+            return;
+        }
+
         var chosen = rows.Where(r => used.Contains(r.Version)).ToList();
         int covered = chosen.Select(r => r.Hero).Distinct().Count(heroIds.Contains);
         string versionNames = string.Join(" + ", used.Select(v => names.GetValueOrDefault(v, v.ToString())));
@@ -108,6 +118,17 @@ internal static class StratzFetcher
         await Save(patchDir, "hero_stats.json", stats);
         meta.GameVersion = names.GetValueOrDefault(used[0], "");
         meta.HeroStatsSource = $"STRATZ винрейт за патч {versionNames} (по рангам)";
+    }
+
+    /// <summary>Номер патча из meta.json, который пишет `fetch` (OpenDota); null — если его нет или он неизвестен.</summary>
+    private static string? ReadOpenDotaPatch(string patchDir)
+    {
+        try
+        {
+            var meta = JsonSerializer.Deserialize<PatchMetaDto>(File.ReadAllText(Path.Combine(patchDir, "meta.json")), DataFiles.Json);
+            return meta is { Patch: not ("" or "unknown") } ? meta.Patch : null;
+        }
+        catch (Exception ex) when (ex is IOException or JsonException) { return null; }
     }
 
     private static async Task FetchBracket(HttpClient http, List<int> heroIds, string patchDir, string bracket, StratzMetaDto meta)
